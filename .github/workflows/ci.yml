@@ -1,0 +1,39 @@
+name: kestrel-feature-reflection CI
+
+on:
+  push:
+    branches: [main, 'release/*', 'codex/*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv run --extra test pytest -q
+      - run: uv build
+      - name: Validate entry point
+        run: |
+          uv run --extra test python - <<'PY'
+          from importlib.metadata import entry_points
+          from kestrel_feature_reflection import ReflectionFeature
+          eps = entry_points(group="kestrel_sovereign.features")
+          assert any(ep.name == "ReflectionFeature" for ep in eps)
+          print(ReflectionFeature.__name__)
+          PY
