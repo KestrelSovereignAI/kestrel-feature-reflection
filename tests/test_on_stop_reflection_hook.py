@@ -117,7 +117,8 @@ async def test_three_structural_facts_persisted_unprompted(monkeypatch):
     llm_kwargs = agent.llm_service.generate_with_messages.await_args.kwargs
     passed = {t["function"]["name"] for t in llm_kwargs["tools"]}
     assert passed == set(RESERVED_FACT_TOOL_NAMES)
-    assert llm_kwargs["session_id"] == "s-1"
+    # Reflection LLM call is isolated from the user conversation cursor.
+    assert llm_kwargs["session_id"] == "per-turn-reflection::s-1"
 
     # All three saves dispatched in one batch through the agent's
     # hook-enforced tool path.
@@ -292,3 +293,47 @@ def test_factory_returns_hook_with_llm_service():
     hook = create_on_stop_reflection_hook(agent)
     assert isinstance(hook, OnStopReflectionHook)
     assert HookEvent.STOP in hook.events
+
+
+async def test_reflection_llm_call_uses_isolated_session_id(monkeypatch):
+    """The reflection LLM call MUST NOT reuse the user turn's session_id —
+    stateful/continuation providers anchor cursor state on it, so reusing
+    it would corrupt the next user-facing turn. A distinct namespaced id
+    is used instead (codex review P1)."""
+    monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
+    agent = _make_agent(llm_response=_llm_response(_three_fact_tool_calls()))
+    hook = OnStopReflectionHook(agent)
+
+    await hook.execute(_stop_input(session_id="user-conv-42"))
+
+    sid = agent.llm_service.generate_with_messages.await_args.kwargs["session_id"]
+    assert sid != "user-conv-42", "must not reuse the user conversation cursor"
+    assert "user-conv-42" in sid and sid.startswith("per-turn-reflection")
+    # Observability still attributes cost to the real conversation.
+    obs_sid = agent.observability_store.log_llm_call.await_args.kwargs["session_id"]
+    assert obs_sid == "user-conv-42"
+
+
+def test_get_hooks_memoizes_same_instance():
+    """The hooks manager unregisters by identity — get_hooks() called
+    repeatedly must return the SAME hook object, or disable/re-enable
+    leaves a stale STOP hook duplicating per-turn reflection (codex
+    review P2)."""
+    from kestrel_feature_reflection.feature import ReflectionFeature
+
+    feat = ReflectionFeature.__new__(ReflectionFeature)  # skip heavy __init__
+    feat.agent = MagicMock()
+    feat.agent.llm_service = MagicMock()
+
+    first = feat.get_hooks()
+    second = feat.get_hooks()
+    assert len(first) == 1 and len(second) == 1
+    assert first[0] is second[0], "get_hooks must return the memoized instance"
+
+
+def test_get_hooks_empty_without_llm_service():
+    from kestrel_feature_reflection.feature import ReflectionFeature
+
+    feat = ReflectionFeature.__new__(ReflectionFeature)
+    feat.agent = MagicMock(spec=[])  # no llm_service
+    assert feat.get_hooks() == []

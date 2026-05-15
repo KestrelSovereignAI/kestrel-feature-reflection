@@ -232,12 +232,25 @@ class OnStopReflectionHook(Hook):
             {"role": "user", "content": transcript},
         ]
 
+        # CRITICAL: do NOT reuse the user turn's session_id. Stateful /
+        # continuation-backed providers (e.g. CodexAdapter) anchor
+        # continuation state (previous_response_id) on session_id — passing
+        # the user's id here would overwrite the conversation's cursor with
+        # the reflection prompt + fact tools, corrupting the next
+        # user-facing turn. Namespace a distinct id so reflection calls are
+        # isolated from the user conversation entirely.
+        reflection_session_id = (
+            f"per-turn-reflection::{input.session_id}"
+            if input.session_id
+            else "per-turn-reflection"
+        )
+
         start = time.monotonic()
         response = await llm_service.generate_with_messages(
             messages=messages,
             tools=fact_tools,
             force_local_only=False,
-            session_id=input.session_id or None,
+            session_id=reflection_session_id,
         )
         duration_ms = int((time.monotonic() - start) * 1000)
 
