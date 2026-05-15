@@ -72,6 +72,23 @@ class ReflectionFeature(Feature):
             "identify patterns, generate insights, and propose behavioral changes"
         )
 
+    def get_hooks(self) -> List:
+        """Register the per-turn fact-capture STOP hook (#1238).
+
+        Returned hooks are auto-registered by the feature loader before
+        ``initialize()``. The hook fires on ``HookEvent.STOP`` after every
+        turn and persists structural facts the agent learned, reading the
+        turn context straight off the enriched ``HookInput`` (kestrel-
+        sovereign #1269). Returns an empty list when the agent can't
+        support it (no ``llm_service``) so a slim/test agent still loads.
+        """
+        from kestrel_feature_reflection.on_stop_hook import (
+            create_on_stop_reflection_hook,
+        )
+
+        hook = create_on_stop_reflection_hook(self.agent)
+        return [hook] if hook is not None else []
+
     @staticmethod
     def _to_tool_result(
         legacy: Dict[str, Any],
