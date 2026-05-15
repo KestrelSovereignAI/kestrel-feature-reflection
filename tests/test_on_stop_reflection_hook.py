@@ -291,6 +291,40 @@ async def test_unenriched_stop_warns_once_and_skips(monkeypatch, caplog):
     assert len(warnings) == 1, "must warn exactly once, not per turn"
 
 
+def test_transcript_preserves_toolresult_envelope_payload():
+    """When the tool-result payload lives in ToolResult fields
+    (status/confirmation/data) rather than a ``result`` key — or the
+    list item IS the envelope with no ``result`` wrapper — the transcript
+    must still surface it, so the reflection LLM can capture facts a tool
+    discovered (codex review)."""
+    # Case A: result key present and meaningful — rendered as-is.
+    a = _stop_input(
+        tool_calls=[{"name": "find_path", "arguments": {}}],
+        tool_results=[{"tool_call_id": "t", "name": "find_path",
+                       "result": {"status": "ok", "data": {"path": "src/x.py"}}}],
+    )
+    ta = format_turn_transcript(a)
+    assert "src/x.py" in ta and "status" in ta
+
+    # Case B: no "result" wrapper — envelope IS the dict. Must not drop it.
+    b = _stop_input(
+        tool_calls=[{"name": "probe", "arguments": {}}],
+        tool_results=[{"tool_call_id": "t", "name": "probe",
+                       "status": "error", "error": "connection refused"}],
+    )
+    tb = format_turn_transcript(b)
+    assert "connection refused" in tb
+
+    # Case C: result present but empty/None — fall back to envelope sibs.
+    c = _stop_input(
+        tool_calls=[{"name": "check", "arguments": {}}],
+        tool_results=[{"tool_call_id": "t", "name": "check",
+                       "result": None, "confirmation": "saved fact #42"}],
+    )
+    tc_ = format_turn_transcript(c)
+    assert "saved fact #42" in tc_
+
+
 def test_transcript_handles_cancel_before_dispatch():
     """tool_calls present, tool_results empty (streaming cancel edge from
     kestrel-sovereign #1269) — must not raise, still renders the call."""

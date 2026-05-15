@@ -113,11 +113,26 @@ def format_turn_transcript(
         lines.append(f"[tool-call] {name}({arg_repr})")
         if i < len(tool_results):
             res = tool_results[i]
-            res_repr = (
-                json.dumps(res.get("result"), default=str)[:1200]
-                if isinstance(res, dict)
-                else str(res)[:1200]
-            )
+            if isinstance(res, dict):
+                # #1269 wraps each as {tool_call_id, name, arguments,
+                # result}. ``result`` is the audit summary, itself often a
+                # ToolResult.to_dict() envelope (status/confirmation/data/
+                # error) — those carry the actual facts a tool surfaced
+                # (a discovered path, an observed failure). Only rendering
+                # res["result"] loses everything when the payload lives in
+                # sibling keys or when the list item IS the envelope (no
+                # "result" wrapper). Render res["result"] when present and
+                # non-empty, else the whole envelope, so tool-learned facts
+                # always reach the reflection LLM (codex review).
+                payload = res.get("result")
+                if payload in (None, {}, [], ""):
+                    payload = {
+                        k: v for k, v in res.items()
+                        if k not in ("tool_call_id", "name", "arguments")
+                    } or res
+                res_repr = json.dumps(payload, default=str)[:1200]
+            else:
+                res_repr = str(res)[:1200]
             lines.append(f"[tool-result] {res_repr}")
 
     if hook_input.response_text:
