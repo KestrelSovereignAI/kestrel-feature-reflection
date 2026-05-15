@@ -235,6 +235,31 @@ def test_transcript_includes_user_response_and_aligned_tool_calls():
     assert "Renamed." in t
 
 
+async def test_unenriched_stop_warns_once_and_skips(monkeypatch, caplog):
+    """Against a sovereign runtime predating #1269, STOP fires with no
+    turn context. The hook must NOT silently no-op forever — it warns
+    once (actionable: upgrade sovereign) then stays quiet, and never
+    issues an LLM call."""
+    import logging as _logging
+    import kestrel_feature_reflection.on_stop_hook as mod
+
+    monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
+    mod._warned_unenriched_stop = False  # reset latch for the test
+
+    agent = _make_agent(llm_response=_llm_response(_three_fact_tool_calls()))
+    hook = OnStopReflectionHook(agent)
+
+    bare = HookInput(session_id="s", hook_event_name=HookEvent.STOP.value)
+
+    with caplog.at_level(_logging.WARNING):
+        await hook.execute(bare)
+        await hook.execute(bare)  # second call must not warn again
+
+    agent.llm_service.generate_with_messages.assert_not_called()
+    warnings = [r for r in caplog.records if "predates the" in r.message]
+    assert len(warnings) == 1, "must warn exactly once, not per turn"
+
+
 def test_transcript_handles_cancel_before_dispatch():
     """tool_calls present, tool_results empty (streaming cancel edge from
     kestrel-sovereign #1269) — must not raise, still renders the call."""

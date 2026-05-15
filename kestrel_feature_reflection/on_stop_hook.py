@@ -41,6 +41,13 @@ from kestrel_sdk.hooks.base import Hook, HookEvent, HookInput, HookOutput
 
 logger = logging.getLogger(__name__)
 
+# One-time warning latch: if STOP fires with an unenriched HookInput we
+# warn ONCE (not every turn) and then stay quiet. Distinguishes a
+# misconfiguration ("running against a kestrel-sovereign that predates
+# the #1269 STOP enrichment") from the normal "nothing to capture this
+# turn" path.
+_warned_unenriched_stop = False
+
 
 # The only tools this hook exposes to the reflection LLM call. Filtering to
 # this set keeps the model from firing unrelated subagent dispatches during
@@ -187,6 +194,33 @@ class OnStopReflectionHook(Hook):
         fact_tools = filter_fact_tools(build_all_tools())
         if not fact_tools:
             # Agent doesn't have the memory/strategy features loaded.
+            return
+
+        # In the enriched world (kestrel-sovereign #1269) a completed turn
+        # ALWAYS carries at least user_message + response_text. If every
+        # #1269 field is absent, this STOP came from a sovereign runtime
+        # that predates the enrichment — the hook can't function there.
+        # That's a deployment misconfiguration, not "nothing to capture",
+        # so surface it loudly ONCE instead of silently no-opping forever.
+        enriched = any((
+            input.user_message,
+            input.response_text,
+            input.tool_calls,
+            input.tool_results,
+        ))
+        if not enriched:
+            global _warned_unenriched_stop
+            if not _warned_unenriched_stop:
+                _warned_unenriched_stop = True
+                logger.warning(
+                    "[per-turn-reflection] STOP HookInput has no turn context "
+                    "(user_message/response_text/tool_calls/tool_results all "
+                    "empty). This kestrel-sovereign runtime predates the "
+                    "#1269 STOP enrichment, so per-turn fact-capture is "
+                    "INACTIVE. Upgrade to a kestrel-sovereign build that "
+                    "includes #1269 (post-0.11.0). This warning logs once "
+                    "per process."
+                )
             return
 
         transcript = format_turn_transcript(input)

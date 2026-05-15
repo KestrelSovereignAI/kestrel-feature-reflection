@@ -6,6 +6,13 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
+    # NOTE: the per-turn fact-capture STOP hook (OnStopReflectionHook,
+    # kestrel-sovereign #1238) requires the STOP HookInput enrichment from
+    # kestrel-sovereign #1269, which merged AFTER 0.11.0. Against an
+    # older sovereign the hook detects the unenriched HookInput, logs a
+    # one-time warning, and stays inactive (it never errors). Bump this
+    # floor to the first released sovereign that contains #1269 once that
+    # release is cut, so installs fail fast instead of silently degrading.
     "kestrel-sovereign>=0.10.2,<1",
     "kestrel-sovereign-sdk>=0.13,<1",
     "aiosqlite>=0.21.0",
