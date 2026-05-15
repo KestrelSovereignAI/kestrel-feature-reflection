@@ -83,21 +83,6 @@ def per_turn_reflection_disabled() -> bool:
     return val in ("1", "true", "yes", "on")
 
 
-def _tool_schema_name(tool: Dict[str, Any]) -> Optional[str]:
-    fn = tool.get("function") if isinstance(tool, dict) else None
-    if isinstance(fn, dict):
-        return fn.get("name")
-    return tool.get("name") if isinstance(tool, dict) else None
-
-
-def filter_fact_tools(all_tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Keep only the three fact-save tool schemas."""
-    return [
-        t for t in (all_tools or [])
-        if _tool_schema_name(t) in RESERVED_FACT_TOOL_NAMES
-    ]
-
-
 def format_turn_transcript(
     hook_input: HookInput,
     *,
@@ -188,12 +173,39 @@ class OnStopReflectionHook(Hook):
             # No LLM (or PayerKind.NONE) — nothing to reflect with.
             return
 
-        build_all_tools = getattr(agent, "_build_all_tools", None)
-        if not callable(build_all_tools):
-            return
-        fact_tools = filter_fact_tools(build_all_tools())
-        if not fact_tools:
+        # Source the three fact tools straight from their owning feature
+        # objects rather than ``_build_all_tools()``. On a fresh agent
+        # ``_build_all_tools()`` only carries feature *dispatcher* schemas
+        # plus already-promoted direct tools — ``save_fact`` /
+        # ``strategy_add_*`` are sub-tools that may not appear until an
+        # unrelated prior interaction happens to expose them, which would
+        # make this hook silently inactive in the default session (codex
+        # review). Walking ``agent.features`` is exposure-state-independent.
+        fact_tool_objs: Dict[str, Any] = {}
+        fact_tool_feature: Dict[str, str] = {}
+        for feature_name, feature in (getattr(agent, "features", {}) or {}).items():
+            get_tools = getattr(feature, "get_tools", None)
+            if not callable(get_tools):
+                continue
+            try:
+                tools = get_tools()
+            except Exception:
+                continue
+            for t in tools or []:
+                tname = getattr(t, "name", None)
+                if tname in RESERVED_FACT_TOOL_NAMES and tname not in fact_tool_objs:
+                    fact_tool_objs[tname] = t
+                    fact_tool_feature[tname] = feature_name
+        if not fact_tool_objs:
             # Agent doesn't have the memory/strategy features loaded.
+            return
+
+        try:
+            fact_tools = [
+                t.schema.to_openai_format() for t in fact_tool_objs.values()
+            ]
+        except Exception as exc:
+            logger.debug(f"[per-turn-reflection] tool schema build failed: {exc}")
             return
 
         # In the enriched world (kestrel-sovereign #1269) a completed turn
@@ -261,46 +273,43 @@ class OnStopReflectionHook(Hook):
             await self._log(agent, duration_ms, 0, input.session_id, success=True)
             return
 
-        # Single round of dispatch through the orchestrator's batch path so
-        # PRE/POST_TOOL_USE hooks + observability fire exactly as they would
-        # for a user-driven save. No follow-up LLM round.
-        features_by_tool_name = self._safe_call(agent, "_visible_features_by_tool_name", {})
-        known_tools = self._safe_call(agent, "_visible_known_tool_names", set())
-        build_tool_calls_msg = getattr(agent, "_build_tool_calls_msg", None)
-        execute_tool_batch = getattr(agent, "_execute_tool_batch", None)
-        if not callable(execute_tool_batch) or not callable(build_tool_calls_msg):
-            await self._log(agent, duration_ms, 0, input.session_id, success=False,
-                            error="agent missing tool-dispatch helpers")
-            return
-
-        reflection_messages = list(messages)
-        reflection_messages.append({
-            "role": "assistant",
-            "content": getattr(response, "content", "") or "",
-            "tool_calls": build_tool_calls_msg(tool_calls),
-        })
-        await execute_tool_batch(
-            tool_calls,
-            features_by_tool_name,
-            known_tools,
-            reflection_messages,
-            0,
-            None,
-            session_id=input.session_id or "per_turn_reflection",
-        )
-        await self._log(
-            agent, duration_ms, len(tool_calls), input.session_id, success=True
-        )
-
-    @staticmethod
-    def _safe_call(agent, attr: str, default):
-        fn = getattr(agent, attr, None)
-        if callable(fn):
+        # Single round: dispatch each fact-save call through the agent's
+        # hook-enforced single-tool entry point. ``_execute_tool_with_hooks``
+        # fires PRE/POST_TOOL_USE (permissions, audit) around the call
+        # regardless of tool-exposure state, and works for sub-tools the
+        # orchestrator batch path can't see on a fresh agent. No follow-up
+        # LLM round — we capture, we don't loop.
+        exec_with_hooks = getattr(agent, "_execute_tool_with_hooks", None)
+        executed = 0
+        for tc in tool_calls:
+            tname = getattr(tc, "name", None)
+            tool_obj = fact_tool_objs.get(tname)
+            if tool_obj is None:
+                continue  # model emitted something outside the allowed set
+            raw_args = getattr(tc, "arguments", {})
+            args = raw_args if isinstance(raw_args, dict) else {}
             try:
-                return fn()
-            except Exception:
-                return default
-        return default
+                if callable(exec_with_hooks):
+                    await exec_with_hooks(
+                        tname,
+                        fact_tool_feature.get(tname, "ReflectionFeature"),
+                        args,
+                        reflection_session_id,
+                        lambda _t=tool_obj, _a=args: _t.execute(**_a),
+                    )
+                else:
+                    # Older sovereign without the helper — direct execute.
+                    # Fact-save tools are low-risk memory writes; degrade
+                    # rather than skip capture entirely.
+                    await tool_obj.execute(**args)
+                executed += 1
+            except Exception as exc:
+                logger.warning(
+                    f"[per-turn-reflection] fact tool '{tname}' failed: {exc}"
+                )
+        await self._log(
+            agent, duration_ms, executed, input.session_id, success=True
+        )
 
     @staticmethod
     async def _log(

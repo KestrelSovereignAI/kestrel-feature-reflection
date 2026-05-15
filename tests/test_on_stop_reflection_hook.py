@@ -22,14 +22,17 @@ from kestrel_feature_reflection.on_stop_hook import (
     RESERVED_FACT_TOOL_NAMES,
     OnStopReflectionHook,
     create_on_stop_reflection_hook,
-    filter_fact_tools,
     format_turn_transcript,
     per_turn_reflection_disabled,
 )
 
 
-def _fact_tool_schema(name: str) -> dict:
-    return {
+def _fact_tool_obj(name: str):
+    """An AgentTool-shaped mock: .name + .schema.to_openai_format() + .execute."""
+    t = MagicMock()
+    t.name = name
+    schema = MagicMock()
+    schema.to_openai_format.return_value = {
         "type": "function",
         "function": {
             "name": name,
@@ -37,6 +40,9 @@ def _fact_tool_schema(name: str) -> dict:
             "parameters": {"type": "object", "properties": {}},
         },
     }
+    t.schema = schema
+    t.execute = AsyncMock(return_value={"success": True})
+    return t
 
 
 def _llm_response(tool_calls=None, content=""):
@@ -73,17 +79,33 @@ def _make_agent(*, llm_response, fact_tools_loaded=True, disabled_llm=False):
     agent.llm_service.disabled = disabled_llm
     agent.llm_service.generate_with_messages = AsyncMock(return_value=llm_response)
 
-    tools = [
-        _fact_tool_schema("save_fact"),
-        _fact_tool_schema("strategy_add_pattern"),
-        _fact_tool_schema("strategy_add_blocker"),
-        _fact_tool_schema("github_issue_view"),  # non-fact, must be filtered
-    ] if fact_tools_loaded else [_fact_tool_schema("github_issue_view")]
-    agent._build_all_tools = MagicMock(return_value=tools)
-    agent._visible_features_by_tool_name = MagicMock(return_value={})
-    agent._visible_known_tool_names = MagicMock(return_value=set())
-    agent._build_tool_calls_msg = MagicMock(return_value=[{"id": "x"}])
-    agent._execute_tool_batch = AsyncMock()
+    # Fact tools are sourced by walking agent.features and calling
+    # feature.get_tools() — exposure-state-independent (codex review).
+    if fact_tools_loaded:
+        mem = MagicMock()
+        mem.get_tools = MagicMock(return_value=[_fact_tool_obj("save_fact")])
+        strat = MagicMock()
+        strat.get_tools = MagicMock(return_value=[
+            _fact_tool_obj("strategy_add_pattern"),
+            _fact_tool_obj("strategy_add_blocker"),
+        ])
+        other = MagicMock()
+        other.get_tools = MagicMock(return_value=[_fact_tool_obj("github_issue_view")])
+        agent.features = {
+            "MemoryAgencyFeature": mem,
+            "StrategicMemoryFeature": strat,
+            "GitHubFeature": other,
+        }
+    else:
+        other = MagicMock()
+        other.get_tools = MagicMock(return_value=[_fact_tool_obj("github_issue_view")])
+        agent.features = {"GitHubFeature": other}
+
+    # Hook-enforced single-tool entry point: invoke the execute_fn.
+    async def _exec_with_hooks(tool_name, feature_name, args, sid, execute_fn):
+        return await execute_fn()
+
+    agent._execute_tool_with_hooks = AsyncMock(side_effect=_exec_with_hooks)
     agent.observability_store = MagicMock()
     agent.observability_store.log_llm_call = AsyncMock(return_value="evt")
     return agent
@@ -120,13 +142,18 @@ async def test_three_structural_facts_persisted_unprompted(monkeypatch):
     # Reflection LLM call is isolated from the user conversation cursor.
     assert llm_kwargs["session_id"] == "per-turn-reflection::s-1"
 
-    # All three saves dispatched in one batch through the agent's
-    # hook-enforced tool path.
-    agent._execute_tool_batch.assert_awaited_once()
-    dispatched = agent._execute_tool_batch.await_args.args[0]
-    assert [tc.name for tc in dispatched] == [
-        "save_fact", "save_fact", "strategy_add_pattern"
+    # Each of the three saves dispatched through the hook-enforced
+    # single-tool entry point (PRE/POST_TOOL_USE fire per call).
+    assert agent._execute_tool_with_hooks.await_count == 3
+    dispatched_names = [
+        c.args[0] for c in agent._execute_tool_with_hooks.await_args_list
     ]
+    assert dispatched_names == ["save_fact", "save_fact", "strategy_add_pattern"]
+    # The owning feature name is passed for permission lookup.
+    feature_names = {
+        c.args[1] for c in agent._execute_tool_with_hooks.await_args_list
+    }
+    assert feature_names == {"MemoryAgencyFeature", "StrategicMemoryFeature"}
 
     # Observability recorded once with the per_turn phase.
     agent.observability_store.log_llm_call.assert_awaited_once()
@@ -144,7 +171,7 @@ async def test_no_facts_learned_zero_saves(monkeypatch):
 
     await hook.execute(_stop_input())
 
-    agent._execute_tool_batch.assert_not_called()
+    agent._execute_tool_with_hooks.assert_not_called()
     agent.observability_store.log_llm_call.assert_awaited_once()
     assert agent.observability_store.log_llm_call.await_args.kwargs[
         "metadata"]["tool_calls_count"] == 0
@@ -161,7 +188,7 @@ async def test_env_disabled_short_circuits(monkeypatch):
     out = await hook.execute(_stop_input())
 
     agent.llm_service.generate_with_messages.assert_not_called()
-    agent._execute_tool_batch.assert_not_called()
+    agent._execute_tool_with_hooks.assert_not_called()
     assert out is not None  # still returns allow()
 
 
@@ -202,7 +229,7 @@ async def test_llm_failure_never_breaks_turn(monkeypatch):
 async def test_tool_batch_failure_swallowed(monkeypatch):
     monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
     agent = _make_agent(llm_response=_llm_response(_three_fact_tool_calls()))
-    agent._execute_tool_batch = AsyncMock(side_effect=RuntimeError("dispatch boom"))
+    agent._execute_tool_with_hooks = AsyncMock(side_effect=RuntimeError("dispatch boom"))
     hook = OnStopReflectionHook(agent)
     out = await hook.execute(_stop_input())
     assert out is not None  # swallowed, turn unaffected
@@ -211,16 +238,19 @@ async def test_tool_batch_failure_swallowed(monkeypatch):
 # --- helpers ---------------------------------------------------------------
 
 
-def test_filter_fact_tools_keeps_only_three():
-    schemas = [
-        _fact_tool_schema("save_fact"),
-        _fact_tool_schema("strategy_add_pattern"),
-        _fact_tool_schema("strategy_add_blocker"),
-        _fact_tool_schema("strategy_add_decision"),
-        _fact_tool_schema("github_issue_view"),
-    ]
-    kept = {t["function"]["name"] for t in filter_fact_tools(schemas)}
-    assert kept == set(RESERVED_FACT_TOOL_NAMES)
+async def test_only_reserved_tools_offered_to_llm(monkeypatch):
+    """The reflection LLM call is offered ONLY the three fact tools even
+    though the agent has other features (github) loaded — sourced by
+    name from agent.features, not the full tool catalog."""
+    monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
+    agent = _make_agent(llm_response=_llm_response(tool_calls=None))
+    hook = OnStopReflectionHook(agent)
+    await hook.execute(_stop_input())
+    offered = {
+        t["function"]["name"]
+        for t in agent.llm_service.generate_with_messages.await_args.kwargs["tools"]
+    }
+    assert offered == set(RESERVED_FACT_TOOL_NAMES)
 
 
 def test_transcript_includes_user_response_and_aligned_tool_calls():
