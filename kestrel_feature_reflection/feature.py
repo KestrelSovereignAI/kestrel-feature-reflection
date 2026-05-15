@@ -72,6 +72,34 @@ class ReflectionFeature(Feature):
             "identify patterns, generate insights, and propose behavioral changes"
         )
 
+    def get_hooks(self) -> List:
+        """Register the per-turn fact-capture STOP hook (#1238).
+
+        Returned hooks are auto-registered by the feature loader before
+        ``initialize()``. The hook fires on ``HookEvent.STOP`` after every
+        turn and persists structural facts the agent learned, reading the
+        turn context straight off the enriched ``HookInput`` (kestrel-
+        sovereign #1269). Returns an empty list when the agent can't
+        support it (no ``llm_service``) so a slim/test agent still loads.
+
+        The hook instance is memoized: the hooks manager unregisters by
+        object identity, so disable/unregister paths that call
+        ``get_hooks()`` again must get the SAME object back — otherwise a
+        stale STOP hook stays registered and per-turn reflection fires
+        twice after a feature toggle.
+        """
+        cached = getattr(self, "_on_stop_hook", None)
+        if cached is not None:
+            return [cached]
+
+        from kestrel_feature_reflection.on_stop_hook import (
+            create_on_stop_reflection_hook,
+        )
+
+        hook = create_on_stop_reflection_hook(self.agent)
+        self._on_stop_hook = hook  # memoize (may be None — cached either way)
+        return [hook] if hook is not None else []
+
     @staticmethod
     def _to_tool_result(
         legacy: Dict[str, Any],
