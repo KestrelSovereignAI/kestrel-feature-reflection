@@ -1,19 +1,19 @@
 [project]
 name = "kestrel-feature-reflection"
-version = "0.1.0"
+version = "0.2.0"
 description = "Agent self-reflection and self-improvement feature for Kestrel Sovereign"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    # NOTE: the per-turn fact-capture STOP hook (OnStopReflectionHook,
+    # The per-turn fact-capture STOP hook (OnStopReflectionHook,
     # kestrel-sovereign #1238) requires the STOP HookInput enrichment from
-    # kestrel-sovereign #1269, which merged AFTER 0.11.0. Against an
-    # older sovereign the hook detects the unenriched HookInput, logs a
-    # one-time warning, and stays inactive (it never errors). Bump this
-    # floor to the first released sovereign that contains #1269 once that
-    # release is cut, so installs fail fast instead of silently degrading.
-    "kestrel-sovereign>=0.10.2,<1",
+    # kestrel-sovereign #1269, first released in kestrel-sovereign 0.12.0.
+    # Floor is pinned there so installs fail fast against an older
+    # sovereign rather than silently degrading to the warn-once-inactive
+    # path. (Pre-0.12.0 the hook still no-ops safely, but a hard floor is
+    # the right contract now that the dependency is released.)
+    "kestrel-sovereign>=0.12.0,<1",
     "kestrel-sovereign-sdk>=0.13,<1",
     "aiosqlite>=0.21.0",
 ]
