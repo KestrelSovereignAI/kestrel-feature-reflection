@@ -820,10 +820,45 @@ class ReflectionFeature(Feature):
         return shape is the legacy reflection-result dict (not a
         ToolResult); sleep-cycle hooks predate the @tool envelope and
         consume the formatted dict directly.
+
+        Also runs the feature's own age-based retention (#1674 P4) so the
+        reflection cognition tables stay bounded — riding the sleep cycle
+        rather than a separate cron (core can't drive feature retention).
         """
+        await self._prune_reflection_data()
         logger.info("Running pre-sleep reflection")
         envelope = await self.reflect(scope="session", depth="shallow")
         return envelope.data if envelope.data is not None else {"success": False, "error": envelope.error or ""}
+
+    async def _prune_reflection_data(self) -> Dict[str, int]:
+        """Age-prune reflection_sessions + reflection_insights (#1674 P4).
+
+        Opt-in via ``[reflection.retention].enabled``; best-effort — a failure
+        here must never break the sleep reflection it rides on. Returns delete
+        counts (zeros when disabled / unavailable)."""
+        none = {"sessions_deleted": 0, "insights_deleted": 0}
+        if not self._db_helper:
+            return none
+        try:
+            from .retention import load_reflection_retention_config
+            cfg = load_reflection_retention_config()
+            if not cfg["enabled"]:
+                return none
+            result = await self._db_helper.prune_old_records(
+                sessions_days=cfg["sessions_days"],
+                insights_days=cfg["insights_days"],
+                actionable_days=cfg["actionable_days"],
+                max_rows=cfg["max_rows"],
+            )
+            if result.get("sessions_deleted") or result.get("insights_deleted"):
+                logger.info(
+                    "[reflection.retention] pruned %d session(s), %d insight(s)",
+                    result["sessions_deleted"], result["insights_deleted"],
+                )
+            return result
+        except Exception as e:  # noqa: BLE001 - retention must not break sleep
+            logger.warning("[reflection.retention] prune failed: %s", e)
+            return none
 
     async def on_post_consolidation(
         self,
