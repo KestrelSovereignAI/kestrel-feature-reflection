@@ -66,6 +66,82 @@ class ReflectionDatabaseHelper:
             ),
         )
 
+    async def prune_old_records(
+        self,
+        *,
+        sessions_days: int,
+        insights_days: int,
+        actionable_days: int,
+        max_rows: int = 5000,
+    ) -> Dict[str, int]:
+        """Age-prune the feature's cognition tables (#1674 P4, Option A).
+
+        - ``reflection_sessions``: telemetry older than ``sessions_days``.
+        - ``reflection_insights``: non-actionable older than ``insights_days``;
+          actionable (pending self-improvement TODOs) older than
+          ``actionable_days`` (preserved far longer but still bounded).
+
+        Per-table per-run cap (``max_rows``) protects the writer; any backlog
+        drains over subsequent nights. created_at is parsed in Python so the
+        mixed ISO/space on-disk formats compare correctly. Returns delete counts.
+        """
+        if not self.db:
+            return {"sessions_deleted": 0, "insights_deleted": 0}
+        return {
+            "sessions_deleted": await self._prune_sessions(sessions_days, max_rows),
+            "insights_deleted": await self._prune_insights(
+                insights_days, actionable_days, max_rows),
+        }
+
+    async def _prune_sessions(self, days: int, max_rows: int) -> int:
+        from .retention import parse_ts_utc, utc_cutoff
+        cutoff = utc_cutoff(days)
+        rows = await self.db.fetchall(
+            """SELECT id, created_at FROM reflection_sessions
+               WHERE agent_id = ? ORDER BY created_at ASC LIMIT ?""",
+            (self.agent_id, max_rows * 2),
+        )
+        ids = []
+        for rid, created in rows or []:
+            ts = parse_ts_utc(created)
+            if ts is not None and ts < cutoff:
+                ids.append(rid)
+                if len(ids) >= max_rows:
+                    break
+        return await self._delete_by_id("reflection_sessions", ids)
+
+    async def _prune_insights(
+        self, insights_days: int, actionable_days: int, max_rows: int
+    ) -> int:
+        from .retention import parse_ts_utc, utc_cutoff
+        non_cut = utc_cutoff(insights_days)
+        act_cut = utc_cutoff(actionable_days)
+        rows = await self.db.fetchall(
+            """SELECT id, created_at, actionable FROM reflection_insights
+               WHERE agent_id = ? ORDER BY created_at ASC LIMIT ?""",
+            (self.agent_id, max_rows * 2),
+        )
+        ids = []
+        for rid, created, actionable in rows or []:
+            ts = parse_ts_utc(created)
+            if ts is None:
+                continue
+            cutoff = act_cut if actionable else non_cut
+            if ts < cutoff:
+                ids.append(rid)
+                if len(ids) >= max_rows:
+                    break
+        return await self._delete_by_id("reflection_insights", ids)
+
+    async def _delete_by_id(self, table: str, ids: list) -> int:
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        await self.db.execute(
+            f"DELETE FROM {table} WHERE id IN ({placeholders})", tuple(ids),
+        )
+        return len(ids)
+
     async def store_session(self, session: ReflectionSession) -> None:
         """Store a reflection session to the database."""
         if not self.db:
