@@ -172,11 +172,32 @@ class ReflectionFeature(Feature):
         self._wire_composite_handlers()
 
     async def post_all_features_loaded(self, agent):
-        """Wire reflection into the sleep cycle after all features are loaded."""
+        """Wire reflection into the sleep cycle after all features are loaded.
+
+        Registers via the core ``agent.sleep_hooks`` list (kestrel-sovereign
+        #1784) so reflection coexists with other sleep hooks (e.g.
+        parametric-self) instead of owning a single slot.
+        """
         from kestrel_feature_reflection.hooks import create_reflection_hook
-        agent.reflection_hook = create_reflection_hook(agent)
-        if agent.reflection_hook:
+        if getattr(agent, "sleep_hooks", None) is None:
+            agent.sleep_hooks = []
+        # Idempotent re-enable: drop a prior registration before re-adding.
+        prior = getattr(self, "_sleep_hook", None)
+        if prior is not None and prior in agent.sleep_hooks:
+            agent.sleep_hooks.remove(prior)
+        self._sleep_hook = create_reflection_hook(agent)
+        if self._sleep_hook is not None:
+            agent.sleep_hooks.append(self._sleep_hook)
             logger.info("Reflection hook enabled for sleep cycle")
+
+    async def on_disable(self):
+        """Unregister the sleep hook so a disabled reflection feature stops
+        running during sleep (and re-enabling does not duplicate it)."""
+        hook = getattr(self, "_sleep_hook", None)
+        hooks = getattr(self.agent, "sleep_hooks", None)
+        if hook is not None and hooks and hook in hooks:
+            hooks.remove(hook)
+        self._sleep_hook = None
 
     def _init_database(self):
         """Initialize database connection and helper."""
