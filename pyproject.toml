@@ -1,6 +1,6 @@
 [project]
 name = "kestrel-feature-reflection"
-version = "0.2.1"
+version = "0.3.0"
 description = "Agent self-reflection and self-improvement feature for Kestrel Sovereign"
 readme = "README.md"
 license = "Apache-2.0"
@@ -12,15 +12,12 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-    # The per-turn fact-capture STOP hook (OnStopReflectionHook,
-    # kestrel-sovereign #1238) requires the STOP HookInput enrichment from
-    # kestrel-sovereign #1269, first released in kestrel-sovereign 0.12.0.
-    # 0.13.1 is the first Python-3.14-ready core release; floor is pinned
-    # there so installs fail fast against an older
-    # sovereign rather than silently degrading to the warn-once-inactive
-    # path. (Pre-0.12.0 the hook still no-ops safely, but a hard floor is
-    # the right contract now that the dependency is released.)
-    "kestrel-sovereign>=0.13.1,<1",
+    # Floor raised to 0.28.0: this version registers its sleep hook via the
+    # core ``agent.sleep_hooks`` list (kestrel-sovereign #1784), which first
+    # ships in 0.28.0. On older core the hook would be appended to a list the
+    # sleep cycle never iterates, silently disabling sleep-cycle reflection — so
+    # the floor is a hard contract, not advisory.
+    "kestrel-sovereign>=0.28.0,<1",
     "kestrel-sovereign-sdk>=0.14.1,<1",
     "aiosqlite>=0.21.0",
 ]
