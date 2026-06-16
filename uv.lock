@@ -1396,7 +1396,7 @@ wheels = [
 
 [[package]]
 name = "kestrel-feature-reflection"
-version = "0.2.1"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -1414,7 +1414,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.21.0" },
-    { name = "kestrel-sovereign", specifier = ">=0.13.1,<1" },
+    { name = "kestrel-sovereign", specifier = ">=0.28.0,<1" },
     { name = "kestrel-sovereign-sdk", specifier = ">=0.14.1,<1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.1.0" },
@@ -1531,7 +1531,7 @@ all = [
 
 [[package]]
 name = "kestrel-sovereign"
-version = "0.27.0"
+version = "0.28.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1588,9 +1588,9 @@ dependencies = [
     { name = "urllib3" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/10/49/a690cceacbe0a8990eaebe41fbc285af4049fb77cf352d664b27fb8f4836/kestrel_sovereign-0.27.0.tar.gz", hash = "sha256:d6fc029a42d65196b67c895f824fd589c2febf8656733f3c2251855ad73d5faf", size = 2085763, upload-time = "2026-06-13T23:07:01.129Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/65/3273d6678a3bdfc2598fe5c55b1995cc132c93a1a936b53e3355d7e26b98/kestrel_sovereign-0.28.0.tar.gz", hash = "sha256:d3c4bc31d305cf8604c241ca817fea642eca05ec8a2955f9048681d1c1cdf245", size = 2095748, upload-time = "2026-06-16T16:26:56.935Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cf/16/7226bc7dd8076f9051ecea5ba800a2a691eb427d7810b56377e858e1e5c6/kestrel_sovereign-0.27.0-py3-none-any.whl", hash = "sha256:c2e9843b4d52c77206c3e49d5279aa2a91abd14018821395a26a4a22f63a596e", size = 2436462, upload-time = "2026-06-13T23:06:59.288Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/ff/3e763434999f4d93297b5434363a3318c367b2f1963fc45106ab04c6bbc8/kestrel_sovereign-0.28.0-py3-none-any.whl", hash = "sha256:dfdbc3d7014fbdf690e7e41b1862c4d1f076c201c4b4b637ffc1b5925c138aa5", size = 2448780, upload-time = "2026-06-16T16:26:54.712Z" },
 ]
 
 [[package]]
