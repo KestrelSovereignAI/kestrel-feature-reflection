@@ -15,14 +15,16 @@ class MindChecker(HealthChecker):
         super().__init__(agent)
         self.analyzer = analyzer
 
-    async def run_all(self, depth: str = "normal") -> List[HealthCheck]:
+    async def run_all(
+        self, scope: str = "today", depth: str = "normal"
+    ) -> List[HealthCheck]:
         checks = [
             await self.check_response_coherence(),
         ]
 
         # Include interaction analysis if analyzer available
         if self.analyzer:
-            checks.append(await self.check_interaction_patterns(depth))
+            checks.append(await self.check_interaction_patterns(scope, depth))
 
         return checks
 
@@ -76,7 +78,9 @@ class MindChecker(HealthChecker):
 
         return check
 
-    async def check_interaction_patterns(self, depth: str) -> HealthCheck:
+    async def check_interaction_patterns(
+        self, scope: str = "today", depth: str = "normal"
+    ) -> HealthCheck:
         """Analyze interaction patterns using existing analyzer."""
         check = HealthCheck(
             id="mind.patterns",
@@ -92,7 +96,7 @@ class MindChecker(HealthChecker):
             return check
 
         try:
-            insights = await self.analyzer.analyze(scope="today", depth=depth)
+            insights = await self.analyzer.analyze(scope=scope, depth=depth)
 
             if not insights:
                 check.status = CheckStatus.PASS
