@@ -57,6 +57,29 @@ from .self_model_handler import SelfModelHandler
 logger = logging.getLogger(__name__)
 
 
+# Documented enumerations for agent-facing parameters. These are the single
+# source of truth for both the @tool ``description=`` strings and the runtime
+# validation below — keep them in sync. Validating against these (rather than
+# silently falling through to a default / empty result) mirrors the existing
+# ``propose_improvement.change_type`` pattern (validate against ChangeType,
+# return a clear error listing valid options).
+REFLECT_SCOPES = ("session", "today", "week", "month", "all")
+REFLECT_DEPTHS = ("shallow", "normal", "deep")
+
+
+def _normalize_choice(value: str, allowed: tuple) -> Optional[str]:
+    """Case-insensitively match ``value`` against ``allowed``.
+
+    Returns the canonical (lower-case) member on success, or ``None`` when the
+    value is not a recognized choice. Used to validate agent-supplied enum-like
+    parameters instead of letting an unknown value silently map to a default.
+    """
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized if normalized in allowed else None
+
+
 class ReflectionFeature(Feature):
     """
     Agent self-reflection and improvement.
@@ -367,7 +390,13 @@ class ReflectionFeature(Feature):
 
     @tool(
         name="reflect",
-        description="Perform layered self-reflection: Arms (functional) → Memory (knowledge) → Mind (cognitive) → Actions (priorities)",
+        description=(
+            "Perform layered self-reflection: Arms (functional) → Memory "
+            "(knowledge) → Mind (cognitive) → Actions (priorities). "
+            "scope (Mind-layer time window) must be one of "
+            "session/today/week/month/all; depth must be one of "
+            "shallow/normal/deep."
+        ),
         category=ToolCategory.SYSTEM,
         command_prefix="!reflect"
     )
@@ -393,6 +422,25 @@ class ReflectionFeature(Feature):
         Returns:
             ReflectionResult with layer results and prioritized actions
         """
+        # Validate enum-like params up front so an unknown value fails loudly
+        # instead of silently filtering "today" (scope) or running "normal"
+        # (depth). Mirrors propose_improvement.change_type validation.
+        canonical_scope = _normalize_choice(scope, REFLECT_SCOPES)
+        if canonical_scope is None:
+            return ToolResult.failed(
+                f"Invalid scope {scope!r}. Valid options: {list(REFLECT_SCOPES)}",
+                data={"scope": scope},
+            )
+        scope = canonical_scope
+
+        canonical_depth = _normalize_choice(depth, REFLECT_DEPTHS)
+        if canonical_depth is None:
+            return ToolResult.failed(
+                f"Invalid depth {depth!r}. Valid options: {list(REFLECT_DEPTHS)}",
+                data={"depth": depth},
+            )
+        depth = canonical_depth
+
         # Create reflection result
         result = ReflectionResult(
             id=str(uuid.uuid4()),
@@ -442,7 +490,7 @@ class ReflectionFeature(Feature):
             # Layer 3: Mind - Is my reasoning producing good outputs?
             logger.info(f"Reflection Layer 3: Mind (cognitive checks, depth={depth})")
             if self._mind_checker:
-                mind_checks = await self._mind_checker.run_all(depth=depth)
+                mind_checks = await self._mind_checker.run_all(scope=scope, depth=depth)
                 result.mind = LayerResult(
                     layer=ReflectionLayer.MIND,
                     checks=mind_checks,
@@ -568,7 +616,11 @@ class ReflectionFeature(Feature):
 
     @tool(
         name="get_insights",
-        description="Get past insights from reflection sessions",
+        description=(
+            "Get past insights from reflection sessions. When provided, "
+            "type_filter must be one of "
+            "pattern/improvement/success/failure/anomaly."
+        ),
         category=ToolCategory.SYSTEM,
         command_prefix="!insights"
     )
@@ -588,6 +640,20 @@ class ReflectionFeature(Feature):
         """
         if not self._db_helper:
             return ToolResult.failed("Database not available")
+
+        # Validate type_filter against InsightType so a typo/wrong-case fails
+        # loudly instead of returning 0 rows indistinguishable from "none".
+        # Mirrors propose_improvement.change_type validation.
+        if type_filter is not None:
+            valid_types = [t.value for t in InsightType]
+            normalized = str(type_filter).strip().lower()
+            if normalized not in valid_types:
+                return ToolResult.failed(
+                    f"Invalid type_filter {type_filter!r}. "
+                    f"Valid options: {valid_types}",
+                    data={"type_filter": type_filter},
+                )
+            type_filter = normalized
 
         try:
             insights = await self._db_helper.get_insights(
@@ -906,7 +972,12 @@ class ReflectionFeature(Feature):
 
     @tool(
         name="training_cycle",
-        description="Run intensive training cycle: rapid reflection → ticket creation → improvement → verify. Unlike sleep (long-term), this is for active meditation.",
+        description=(
+            "Run intensive training cycle: rapid reflection → ticket "
+            "creation → improvement → verify. Unlike sleep (long-term), "
+            "this is for active meditation. depth must be one of "
+            "shallow/normal/deep."
+        ),
         category=ToolCategory.SYSTEM,
         command_prefix="!train"
     )
@@ -921,9 +992,20 @@ class ReflectionFeature(Feature):
 
         Args:
             iterations: Number of reflection cycles (default: 3)
-            depth: Analysis depth ('quick', 'normal', 'deep')
+            depth: Analysis depth ('shallow', 'normal', 'deep')
             create_tickets: Whether to create GitHub issues for action items
         """
+        # Validate depth up front so a typo fails before any iteration runs
+        # (reflect() also validates, but doing it here gives one clean error
+        # instead of a per-iteration partial loop).
+        canonical_depth = _normalize_choice(depth, REFLECT_DEPTHS)
+        if canonical_depth is None:
+            return ToolResult.failed(
+                f"Invalid depth {depth!r}. Valid options: {list(REFLECT_DEPTHS)}",
+                data={"depth": depth},
+            )
+        depth = canonical_depth
+
         legacy = await self._training_manager.run_training_cycle(
             iterations=iterations,
             depth=depth,
