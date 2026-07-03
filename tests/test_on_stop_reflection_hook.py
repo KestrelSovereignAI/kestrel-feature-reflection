@@ -13,6 +13,7 @@ agent, mirroring the kestrel-sovereign test pattern for the loop.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -45,10 +46,14 @@ def _fact_tool_obj(name: str):
     return t
 
 
-def _llm_response(tool_calls=None, content=""):
+def _llm_response(tool_calls=None, content="", executed_tool_calls=None):
     r = MagicMock()
     r.content = content
     r.tool_calls = tool_calls
+    # Stateless routes (openai:api / local) leave this unset. Pin it to the
+    # provided value (default None) so ``getattr`` doesn't auto-vivify a
+    # truthy MagicMock that the hook would mistake for inline-executed calls.
+    r.executed_tool_calls = executed_tool_calls
     return r
 
 
@@ -101,9 +106,14 @@ def _make_agent(*, llm_response, fact_tools_loaded=True, disabled_llm=False):
         other.get_tools = MagicMock(return_value=[_fact_tool_obj("github_issue_view")])
         agent.features = {"GitHubFeature": other}
 
-    # Hook-enforced single-tool entry point: invoke the execute_fn.
+    # Hook-enforced single-tool entry point. The sovereign contract calls
+    # ``execute_fn(args)`` with the post-PRE_TOOL_USE args as a SINGLE
+    # positional argument (see kestrel-sovereign
+    # orchestrator_engine._execute_tool_with_hooks) — the mock must match the
+    # real envelope, or it would mask the F365 arity bug. Returns the tool
+    # result so the hook can distinguish a saved fact from a denial.
     async def _exec_with_hooks(tool_name, feature_name, args, sid, execute_fn):
-        return await execute_fn()
+        return await execute_fn(args)
 
     agent._execute_tool_with_hooks = AsyncMock(side_effect=_exec_with_hooks)
     agent.observability_store = MagicMock()
@@ -175,6 +185,147 @@ async def test_no_facts_learned_zero_saves(monkeypatch):
     agent.observability_store.log_llm_call.assert_awaited_once()
     assert agent.observability_store.log_llm_call.await_args.kwargs[
         "metadata"]["tool_calls_count"] == 0
+
+
+# --- stateful / openai:plan routes (F047) ----------------------------------
+
+
+async def test_tool_executor_passed_and_gated(monkeypatch):
+    """The hook must advertise a tool_executor (stateful routes reject a
+    tools-with-no-executor call), and that executor must refuse anything
+    outside the reserved fact set."""
+    monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
+    agent = _make_agent(llm_response=_llm_response(tool_calls=None))
+    hook = OnStopReflectionHook(agent)
+
+    await hook.execute(_stop_input())
+
+    executor = agent.llm_service.generate_with_messages.await_args.kwargs[
+        "tool_executor"]
+    assert callable(executor)
+
+    # Reserved tool routes through the hook-enforced path.
+    ok = await executor("save_fact", {"subject": "p", "predicate": "x",
+                                      "value": "y", "confidence": 1.0})
+    assert ok == {"success": True}
+    agent._execute_tool_with_hooks.assert_awaited_once()
+
+    # A non-reserved tool is refused inline and never dispatched.
+    denied = await executor("github_issue_create", {"title": "pwn"})
+    assert denied["success"] is False
+    agent._execute_tool_with_hooks.assert_awaited_once()  # still just the one
+
+
+async def test_plan_route_inline_calls_not_redispatched(monkeypatch):
+    """On a stateful route codex runs the fact tools inline and returns
+    them as ``executed_tool_calls``. The post-hoc loop must NOT re-run them
+    (double-save) and observability must count the inline saves (F047)."""
+    monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
+    resp = _llm_response(
+        tool_calls=None,
+        executed_tool_calls=[
+            {"id": "r1", "name": "save_fact", "arguments": {},
+             "result": {"success": True}},
+            {"id": "r2", "name": "strategy_add_pattern", "arguments": {},
+             "result": {"success": True}},
+        ],
+    )
+    agent = _make_agent(llm_response=resp)
+    hook = OnStopReflectionHook(agent)
+
+    await hook.execute(_stop_input())
+
+    # Inline calls were already executed by codex — no post-hoc dispatch.
+    agent._execute_tool_with_hooks.assert_not_called()
+    # But both inline saves are counted.
+    obs = agent.observability_store.log_llm_call.await_args.kwargs
+    assert obs["metadata"]["tool_calls_count"] == 2
+
+
+async def test_plan_route_denied_inline_call_not_counted(monkeypatch):
+    """A denied/failed inline save (permission block) must not inflate the
+    executed count."""
+    monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
+    resp = _llm_response(
+        tool_calls=None,
+        executed_tool_calls=[
+            {"id": "r1", "name": "save_fact", "arguments": {},
+             "result": {"success": True}},
+            {"id": "r2", "name": "save_fact", "arguments": {},
+             "result": {"success": False, "error": "denied"}},
+        ],
+    )
+    agent = _make_agent(llm_response=resp)
+    hook = OnStopReflectionHook(agent)
+
+    await hook.execute(_stop_input())
+
+    obs = agent.observability_store.log_llm_call.await_args.kwargs
+    assert obs["metadata"]["tool_calls_count"] == 1
+
+
+async def test_failed_toolresult_object_not_counted(monkeypatch):
+    """A fact tool that returns a ``ToolResult`` OBJECT with an error status
+    (not a dict) must not be counted as a captured fact (codex P2)."""
+    monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
+    agent = _make_agent(
+        llm_response=_llm_response([_tc("r1", "save_fact", {"value": "x"})])
+    )
+
+    # ToolResult-shaped object: .status is an enum-like with a .name.
+    failed = SimpleNamespace(status=SimpleNamespace(name="ERROR"), error="kg down")
+    agent.features["MemoryAgencyFeature"].get_tools()[0].execute = AsyncMock(
+        return_value=failed
+    )
+
+    hook = OnStopReflectionHook(agent)
+    await hook.execute(_stop_input())
+
+    obs = agent.observability_store.log_llm_call.await_args.kwargs
+    assert obs["metadata"]["tool_calls_count"] == 0
+
+
+# --- dual sovereign execute_fn contract (codex P1) -------------------------
+
+
+async def test_old_sovereign_zero_arg_execute_fn(monkeypatch):
+    """sovereign < #1866 (e.g. the 0.28.0 floor) calls ``execute_fn()`` with
+    NO positional args. The executor must still save facts there — a
+    fixed one-arg lambda would raise TypeError and silently drop them."""
+    monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
+    agent = _make_agent(llm_response=_llm_response(_three_fact_tool_calls()))
+
+    async def _old_contract(tool_name, feature_name, args, sid, execute_fn):
+        return await execute_fn()  # 0.28.0 contract: no positional args
+    agent._execute_tool_with_hooks = AsyncMock(side_effect=_old_contract)
+
+    hook = OnStopReflectionHook(agent)
+    await hook.execute(_stop_input())
+
+    assert agent._execute_tool_with_hooks.await_count == 3
+    obs = agent.observability_store.log_llm_call.await_args.kwargs
+    assert obs["metadata"]["tool_calls_count"] == 3
+
+
+async def test_new_sovereign_modify_rewrite_honored(monkeypatch):
+    """sovereign >= #1866 passes the post-PRE_TOOL_USE args positionally; the
+    executor must forward THOSE (redacted/rewritten) args to the tool, not
+    the model's pre-hook copy."""
+    monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
+    agent = _make_agent(
+        llm_response=_llm_response([_tc("r1", "save_fact", {"value": "RAW"})])
+    )
+
+    async def _rewriting_contract(tool_name, feature_name, args, sid, execute_fn):
+        # Simulate a PRE_TOOL_USE MODIFY that redacted the value.
+        return await execute_fn({"value": "REDACTED"})
+    agent._execute_tool_with_hooks = AsyncMock(side_effect=_rewriting_contract)
+
+    hook = OnStopReflectionHook(agent)
+    await hook.execute(_stop_input())
+
+    fact_tool = agent.features["MemoryAgencyFeature"].get_tools()[0]
+    fact_tool.execute.assert_awaited_once_with(value="REDACTED")
 
 
 # --- isolation / opt-out ---------------------------------------------------
