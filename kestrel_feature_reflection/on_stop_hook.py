@@ -59,6 +59,36 @@ RESERVED_FACT_TOOL_NAMES: frozenset[str] = frozenset({
 })
 
 
+def _is_denied(result: Any) -> bool:
+    """True when a tool result is a permission-denied / failed capture.
+
+    Three shapes reach the counter and none of them wrote a fact, so none
+    may be counted as an ``executed`` capture in observability:
+
+    * the PRE_TOOL_USE blocking envelope ``{success: False, ...}`` that
+      ``_execute_tool_with_hooks`` returns when a save is denied/queued;
+    * a flat ToolResult dict with an error/denied ``status`` string;
+    * a ``ToolResult`` OBJECT (e.g. ``save_fact`` returning
+      ``ToolResult.failed(...)`` when the knowledge graph is unavailable),
+      whose ``status`` is a ``ToolResultStatus`` enum, not a dict key.
+
+    PARTIAL is treated as a capture — per the sovereign wrapper it still ran
+    the action.
+    """
+    if isinstance(result, dict):
+        if result.get("success") is False:
+            return True
+        status = result.get("status")
+        return isinstance(status, str) and status.lower() in ("error", "denied")
+    # ToolResult (or any status-bearing object): a failed/denied status means
+    # nothing was written.
+    status_obj = getattr(result, "status", None)
+    if status_obj is None:
+        return False
+    status_name = (getattr(status_obj, "name", None) or str(status_obj)).upper()
+    return status_name in ("ERROR", "DENIED", "FAILED")
+
+
 PER_TURN_REFLECTION_SYSTEM_PROMPT = """You just finished a turn. Before moving on, take one structured moment to capture what you learned.
 
 Look at the transcript below and ask:
@@ -272,52 +302,108 @@ class OnStopReflectionHook(Hook):
             else "per-turn-reflection"
         )
 
+        # ``_execute_tool_with_hooks`` is the single hook-enforced entry
+        # point (PRE/POST_TOOL_USE: permissions, audit) and works for
+        # sub-tools the orchestrator batch path can't see on a fresh agent.
+        exec_with_hooks = getattr(agent, "_execute_tool_with_hooks", None)
+
+        def _dispatch(tname: str, call_args: Dict[str, Any]):
+            """Run one fact tool through the hook-enforced path.
+
+            ``_execute_tool_with_hooks``'s ``execute_fn`` contract CHANGED
+            across the supported sovereign range and the executor must work
+            under both (this package supports ``kestrel-sovereign>=0.28.0``):
+
+            * sovereign < #1866 (e.g. 0.28.0) calls ``execute_fn()`` with no
+              arguments — PRE_TOOL_USE MODIFY rewrites were dropped there.
+            * sovereign >= #1866 calls ``execute_fn(args)`` with the post-hook
+              args as a single positional, so MODIFY rewrites are honored.
+
+            A fixed-arity lambda breaks on one side or the other — the prior
+            zero-arity form raised ``TypeError`` (swallowed) on new sovereign,
+            silently disabling ALL per-turn fact capture (F365). Accept the
+            optional positional: use the post-hook args when passed, else fall
+            back to the pre-hook ``call_args`` (exactly the old behavior).
+            """
+            if callable(exec_with_hooks):
+                return exec_with_hooks(
+                    tname,
+                    fact_tool_feature.get(tname, "ReflectionFeature"),
+                    call_args,
+                    reflection_session_id,
+                    lambda *a, _t=fact_tool_objs[tname], _fallback=call_args: (
+                        _t.execute(
+                            **(a[0] if a and isinstance(a[0], dict) else _fallback)
+                        )
+                    ),
+                )
+            # Older sovereign without the helper — direct execute. Fact-save
+            # tools are low-risk memory writes; degrade rather than skip.
+            return fact_tool_objs[tname].execute(**call_args)
+
+        # Stateful routes (openai:plan / codex app-server) REJECT a
+        # ``generate_with_messages`` that advertises tools without a
+        # ``tool_executor`` — the codex adapter raises
+        # ``"openai:plan ... requires a tool_executor"``, which the hook was
+        # swallowing, so plan-route agents captured ZERO facts indefinitely
+        # (F047). Supply an executor restricted to the reserved fact tools:
+        # on stateful routes codex runs it inline and returns the calls as
+        # ``executed_tool_calls``; stateless routes ignore it and return
+        # ``tool_calls`` for the post-hoc loop below.
+        async def _fact_tool_executor(name: str, call_args: Any):
+            if name not in fact_tool_objs:
+                # The reflection turn must never execute arbitrary tools.
+                return {
+                    "success": False,
+                    "error": f"tool '{name}' not permitted in reflection",
+                }
+            safe_args = call_args if isinstance(call_args, dict) else {}
+            return await _dispatch(name, safe_args)
+
         start = time.monotonic()
         response = await llm_service.generate_with_messages(
             messages=messages,
             tools=fact_tools,
             force_local_only=False,
             session_id=reflection_session_id,
+            tool_executor=_fact_tool_executor,
         )
         duration_ms = int((time.monotonic() - start) * 1000)
 
-        tool_calls = getattr(response, "tool_calls", None)
-        has_tool_calls = bool(tool_calls)
+        # Calls codex already ran inline on a stateful route. The adapter
+        # attaches them as ``executed_tool_calls`` (id/name/arguments/result);
+        # they must NOT be re-dispatched below or facts double-save (F047).
+        inline_executed = getattr(response, "executed_tool_calls", None) or []
+        inline_ids = {
+            e.get("id") for e in inline_executed
+            if isinstance(e, dict) and e.get("id")
+        }
+        executed = sum(
+            1 for e in inline_executed
+            if isinstance(e, dict) and not _is_denied(e.get("result"))
+        )
 
-        if not has_tool_calls:
+        tool_calls = getattr(response, "tool_calls", None) or []
+        if not tool_calls and not inline_executed:
             await self._log(agent, duration_ms, 0, input.session_id, success=True)
             return
 
-        # Single round: dispatch each fact-save call through the agent's
-        # hook-enforced single-tool entry point. ``_execute_tool_with_hooks``
-        # fires PRE/POST_TOOL_USE (permissions, audit) around the call
-        # regardless of tool-exposure state, and works for sub-tools the
-        # orchestrator batch path can't see on a fresh agent. No follow-up
-        # LLM round — we capture, we don't loop.
-        exec_with_hooks = getattr(agent, "_execute_tool_with_hooks", None)
-        executed = 0
+        # Post-hoc dispatch for stateless routes: a single round, no follow-up
+        # LLM turn — we capture, we don't loop. Skip any call already executed
+        # inline (belt-and-suspenders for a route that returns both).
         for tc in tool_calls:
             tname = getattr(tc, "name", None)
-            tool_obj = fact_tool_objs.get(tname)
-            if tool_obj is None:
+            if tname not in fact_tool_objs:
                 continue  # model emitted something outside the allowed set
+            tc_id = getattr(tc, "id", None)
+            if tc_id and tc_id in inline_ids:
+                continue  # already executed inline on the stateful route
             raw_args = getattr(tc, "arguments", {})
             args = raw_args if isinstance(raw_args, dict) else {}
             try:
-                if callable(exec_with_hooks):
-                    await exec_with_hooks(
-                        tname,
-                        fact_tool_feature.get(tname, "ReflectionFeature"),
-                        args,
-                        reflection_session_id,
-                        lambda _t=tool_obj, _a=args: _t.execute(**_a),
-                    )
-                else:
-                    # Older sovereign without the helper — direct execute.
-                    # Fact-save tools are low-risk memory writes; degrade
-                    # rather than skip capture entirely.
-                    await tool_obj.execute(**args)
-                executed += 1
+                result = await _dispatch(tname, args)
+                if not _is_denied(result):
+                    executed += 1
             except Exception as exc:
                 logger.warning(
                     f"[per-turn-reflection] fact tool '{tname}' failed: {exc}"
