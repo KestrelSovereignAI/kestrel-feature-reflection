@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, 'release/*', 'codex/*']
   pull_request:
-    branches: [main]
+    branches: [main, 'release/*']
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -23,6 +23,9 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
       - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
       - run: uv python install ${{ env.PYTHON_VERSION }}
       - run: uv run --extra test pytest -q
       - run: uv build
