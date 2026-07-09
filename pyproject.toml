@@ -1,13 +1,24 @@
 [project]
 name = "kestrel-feature-reflection"
-version = "0.1.0"
+version = "0.3.1"
 description = "Agent self-reflection and self-improvement feature for Kestrel Sovereign"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.15"
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 dependencies = [
-    "kestrel-sovereign>=0.10.2,<1",
-    "kestrel-sovereign-sdk>=0.13,<1",
+    # Floor raised to 0.28.0: this version registers its sleep hook via the
+    # core ``agent.sleep_hooks`` list (kestrel-sovereign #1784), which first
+    # ships in 0.28.0. On older core the hook would be appended to a list the
+    # sleep cycle never iterates, silently disabling sleep-cycle reflection — so
+    # the floor is a hard contract, not advisory.
+    "kestrel-sovereign>=0.28.0,<1",
+    "kestrel-sovereign-sdk>=0.14.1,<1",
     "aiosqlite>=0.21.0",
 ]
 

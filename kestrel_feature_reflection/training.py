@@ -48,7 +48,7 @@ class TrainingManager:
 
         Args:
             iterations: Number of reflection cycles (default: 3)
-            depth: Analysis depth ('quick', 'normal', 'deep')
+            depth: Analysis depth ('shallow', 'normal', 'deep')
             create_tickets: Whether to create GitHub issues for action items
 
         Returns:
