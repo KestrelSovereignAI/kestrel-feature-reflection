@@ -27,6 +27,8 @@ Design invariants:
   LLM round. We capture facts, we don't start a sub-agent loop.
 - **Opt-out.** ``KESTREL_PER_TURN_REFLECTION_DISABLED=1`` disables it.
   Default on.
+- **Privacy.** The call carries the whole turn, so it follows the agent's
+  live privacy state: a local-only mode keeps it on local routes (#14).
 """
 
 from __future__ import annotations
@@ -105,6 +107,23 @@ Rules:
 - Do not narrate or address the user. Output text is discarded; only tool calls have effect.
 - Confidence: 1.0 for things you directly verified, 0.7-0.9 for strong inference, lower for guesses.
 """
+
+
+def live_force_local_only(llm_service: Any) -> bool:
+    """The agent's live local-only privacy state, for this hook's LLM call.
+
+    ``generate_with_messages`` takes ``force_local_only`` from its caller and
+    does not read the privacy state itself, so this hook must pass it (#14).
+    Fails closed: a service that cannot say, or whose provider raises, is
+    treated as local-only.
+    """
+    provider = getattr(llm_service, "_current_force_local_only", None)
+    if not callable(provider):
+        return True
+    try:
+        return bool(provider())
+    except Exception:
+        return True
 
 
 def per_turn_reflection_disabled() -> bool:
@@ -364,7 +383,7 @@ class OnStopReflectionHook(Hook):
         response = await llm_service.generate_with_messages(
             messages=messages,
             tools=fact_tools,
-            force_local_only=False,
+            force_local_only=live_force_local_only(llm_service),
             session_id=reflection_session_id,
             tool_executor=_fact_tool_executor,
         )

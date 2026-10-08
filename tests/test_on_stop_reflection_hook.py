@@ -83,6 +83,7 @@ def _make_agent(*, llm_response, fact_tools_loaded=True, disabled_llm=False):
     agent.llm_service = MagicMock()
     agent.llm_service.disabled = disabled_llm
     agent.llm_service.generate_with_messages = AsyncMock(return_value=llm_response)
+    agent.llm_service._current_force_local_only = lambda: False
 
     # Fact tools are sourced by walking agent.features and calling
     # feature.get_tools() — exposure-state-independent (codex review).
@@ -552,3 +553,42 @@ def test_get_hooks_empty_without_llm_service():
     feat = ReflectionFeature.__new__(ReflectionFeature)
     feat.agent = MagicMock(spec=[])  # no llm_service
     assert feat.get_hooks() == []
+
+
+# --- privacy (#14) ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(("live", "expected"), [
+    (lambda: False, False),
+    (lambda: True, True),
+    (None, True),  # the service cannot say: fail closed
+])
+async def test_reflection_call_follows_live_privacy(monkeypatch, live, expected):
+    """The per-turn call carries the whole turn, so a local-only privacy mode
+    must keep it on local routes; it used to hardcode ``False``."""
+    monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
+    agent = _make_agent(llm_response=_llm_response([]))
+    agent.llm_service = MagicMock(spec=["disabled", "generate_with_messages"]
+                                  + (["_current_force_local_only"] if live else []))
+    agent.llm_service.disabled = False
+    agent.llm_service.generate_with_messages = AsyncMock(return_value=_llm_response([]))
+    if live:
+        agent.llm_service._current_force_local_only = live
+
+    await OnStopReflectionHook(agent).execute(_stop_input())
+
+    kwargs = agent.llm_service.generate_with_messages.await_args.kwargs
+    assert kwargs["force_local_only"] is expected
+
+
+async def test_a_raising_privacy_provider_fails_closed(monkeypatch):
+    monkeypatch.delenv("KESTREL_PER_TURN_REFLECTION_DISABLED", raising=False)
+    agent = _make_agent(llm_response=_llm_response([]))
+
+    def broken():
+        raise RuntimeError("privacy provider down")
+
+    agent.llm_service._current_force_local_only = broken
+    await OnStopReflectionHook(agent).execute(_stop_input())
+    assert agent.llm_service.generate_with_messages.await_args.kwargs["force_local_only"] is True
+
