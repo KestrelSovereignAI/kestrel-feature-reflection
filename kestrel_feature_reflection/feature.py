@@ -246,11 +246,6 @@ class ReflectionFeature(Feature):
 
     def _init_analyzer(self):
         """Initialize the interaction analyzer."""
-        # Get episode store (from memory consolidator)
-        episode_store = None
-        if hasattr(self.agent, 'memory_consolidator'):
-            episode_store = self.agent.memory_consolidator
-
         # Get LLM service
         llm_service = None
         if hasattr(self.agent, 'llm_service'):
@@ -263,7 +258,7 @@ class ReflectionFeature(Feature):
             self.analyzer = InteractionAnalyzer(
                 llm_service=llm_service,
                 conversation_store=conversation_store,
-                episode_store=episode_store,
+                episode_store_provider=lambda: getattr(self.agent, "memory_consolidator", None),
                 agent_id=agent_id,
                 privacy_owner=self.agent,
             )
