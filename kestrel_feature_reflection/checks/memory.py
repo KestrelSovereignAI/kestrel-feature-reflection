@@ -1,5 +1,6 @@
 """Layer 2: Memory - Knowledge/Context checks."""
 from typing import List
+from kestrel_sovereign.execution_custody import is_execution_control_error
 from hashlib import sha256
 
 from .base import HealthChecker
@@ -66,6 +67,8 @@ class MemoryChecker(HealthChecker):
             check.message = "Constitution accessible and intact"
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.FAIL
             check.severity = Severity.CRITICAL
             check.message = f"Constitution access error: {e}"
@@ -83,8 +86,7 @@ class MemoryChecker(HealthChecker):
         )
 
         try:
-            storage = getattr(self.agent, 'storage', None)
-            conv_store = getattr(storage, 'conversation', None) if storage else None
+            conv_store = self.agent.privacy_agent
 
             if not conv_store:
                 check.status = CheckStatus.SKIP
@@ -122,6 +124,8 @@ class MemoryChecker(HealthChecker):
                 check.message = f"Can read {len(history)} messages"
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.FAIL
             check.severity = Severity.CRITICAL
             check.message = f"Conversation access error: {e}"
@@ -154,6 +158,8 @@ class MemoryChecker(HealthChecker):
             check.details = {"test_query": "success"}
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.WARN
             check.severity = Severity.MEDIUM
             check.message = f"Graph check error: {e}"
@@ -191,6 +197,8 @@ class MemoryChecker(HealthChecker):
                 check.message = f"RAG returning results ({len(results)} hits)"
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.WARN
             check.severity = Severity.LOW
             check.message = f"RAG check error: {e}"

@@ -10,9 +10,7 @@ from uuid import uuid4
 
 import pytest
 from kestrel_sovereign.privacy import PrivacyMode
-from kestrel_sovereign.storage.memory_system import MemorySystem
 
-from kestrel_feature_reflection.feature import ReflectionFeature
 from kestrel_feature_reflection.models import (
     CheckStatus,
     HealthCheck,
@@ -23,21 +21,7 @@ from kestrel_feature_reflection.models import (
     ReflectionResult,
 )
 
-pytest_plugins = ["kestrel_sovereign.testing.fixtures"]
 pytestmark = pytest.mark.asyncio
-
-
-@pytest.fixture
-async def reflection_writer(native_tool_effect_agent):
-    agent = await native_tool_effect_agent(did="did:test:reflection-privacy")
-    agent.memory_system = MemorySystem(
-        agent._raw_storage, agent.did, privacy_storage=agent.storage,
-        transition_lock=agent._get_privacy_transition_lock(),
-    )
-    feature = ReflectionFeature(agent)
-    await feature.initialize()
-    yield feature
-    await feature.on_disable()
 
 
 def reflection_input(feature):
@@ -168,3 +152,19 @@ async def test_coherence_check_uses_the_same_private_conversation(reflection_wri
     check = await feature._mind_checker.check_response_coherence()
     assert check.status is (CheckStatus.PASS if mode == PrivacyMode.NORMAL else CheckStatus.SKIP), (
         "Coherence check bypassed the current privacy-aware conversation")
+
+
+@pytest.mark.parametrize("mode", [PrivacyMode.NORMAL, PrivacyMode.EPHEMERAL,
+                                  PrivacyMode.ISOLATED, PrivacyMode.DEIDENTIFIED])
+async def test_decryption_check_uses_the_same_private_conversation(reflection_writer, mode):
+    feature = reflection_writer
+    await feature.agent.privacy_agent.add_conversation("user", "Earlier durable question")
+    await feature.agent.privacy_agent.add_conversation("assistant", "Earlier durable answer")
+    async with feature.agent._get_privacy_transition_lock():
+        feature.agent.storage.set_privacy_mode(mode)
+        feature.agent.privacy_agent.set_mode(mode)
+    await feature.agent.privacy_agent.add_conversation("user", "Current private question")
+    expected = await feature.agent.privacy_agent.get_conversation_history(limit=5)
+    check = await feature._memory_checker.check_conversation_decryption()
+    assert check.message == f"Can read {len(expected)} messages", (
+        "Decryption check bypassed the current privacy-aware conversation")

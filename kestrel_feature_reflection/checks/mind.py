@@ -1,5 +1,6 @@
 """Layer 3: Mind - Cognitive checks."""
 from typing import List, Optional, TYPE_CHECKING
+from kestrel_sovereign.execution_custody import is_execution_control_error
 
 from .base import HealthChecker
 from ..models import HealthCheck, ReflectionLayer, CheckStatus, Severity, InsightType
@@ -72,6 +73,8 @@ class MindChecker(HealthChecker):
                 check.message = f"Evaluated {len(assistant_msgs)} responses"
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.SKIP
             check.message = f"Coherence check error: {e}"
 
@@ -117,6 +120,8 @@ class MindChecker(HealthChecker):
             check.details = {"insights": [i.to_dict() for i in insights]}
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.WARN
             check.message = f"Analysis error: {e}"
 
