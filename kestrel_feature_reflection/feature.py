@@ -21,7 +21,6 @@ from kestrel_sdk.tools.base import ToolCategory
 from kestrel_sdk.tools.result import ToolResult
 from kestrel_sdk.features.base import Feature, tool
 from kestrel_sovereign.features.storage_access import (
-    resolve_feature_conversation_store,
     resolve_feature_database,
 )
 from kestrel_sovereign.kestrel_config.constants import (
@@ -243,11 +242,6 @@ class ReflectionFeature(Feature):
 
     def _init_analyzer(self):
         """Initialize the interaction analyzer."""
-        conversation_store = (
-            resolve_feature_conversation_store(self.agent)
-            or getattr(self.agent, 'conversation_store', None)
-        )
-
         # Get episode store (from memory consolidator)
         episode_store = None
         if hasattr(self.agent, 'memory_consolidator'):
@@ -257,6 +251,7 @@ class ReflectionFeature(Feature):
         llm_service = None
         if hasattr(self.agent, 'llm_service'):
             llm_service = self.agent.llm_service
+        conversation_store = self.agent.privacy_agent if llm_service else None
 
         # Initialize analyzer if we have the required components
         if llm_service and conversation_store:
@@ -520,39 +515,43 @@ class ReflectionFeature(Feature):
         if not self._db_helper:
             return
 
-        try:
-            # Extract insights from Mind layer check details
-            insights = []
-            if result.mind:
-                for check in result.mind.checks:
-                    if check.details and "insights" in check.details:
-                        for item in check.details["insights"]:
-                            try:
-                                insights.append(Insight.from_dict(item))
-                            except Exception:
-                                continue
+        async with self.agent.memory_system.durable_writes() as allowed:
+            if not allowed:
+                return
 
-            # Build and store session
-            from .models import ReflectionSession
-            session = ReflectionSession(
-                id=result.id,
-                trigger=result.trigger,
-                started_at=result.started_at,
-                completed_at=result.completed_at,
-                insights=insights,
-                error=result.error,
-            )
-            await self._db_helper.store_session(session)
+            try:
+                # Extract insights from Mind layer check details
+                insights = []
+                if result.mind:
+                    for check in result.mind.checks:
+                        if check.details and "insights" in check.details:
+                            for item in check.details["insights"]:
+                                try:
+                                    insights.append(Insight.from_dict(item))
+                                except Exception:
+                                    continue
 
-            # Store individual insights
-            for insight in insights:
-                await self._db_helper.store_insight(insight, session_id=result.id)
+                # Build and store session
+                from .models import ReflectionSession
+                session = ReflectionSession(
+                    id=result.id,
+                    trigger=result.trigger,
+                    started_at=result.started_at,
+                    completed_at=result.completed_at,
+                    insights=insights,
+                    error=result.error,
+                )
+                await self._db_helper.store_session(session)
 
-            if insights:
-                logger.info(f"Persisted reflection session {result.id} with {len(insights)} insights")
+                # Store individual insights
+                for insight in insights:
+                    await self._db_helper.store_insight(insight, session_id=result.id)
 
-        except Exception as e:
-            logger.warning(f"Failed to persist reflection: {e}")
+                if insights:
+                    logger.info(f"Persisted reflection session {result.id} with {len(insights)} insights")
+
+            except Exception as e:
+                logger.warning(f"Failed to persist reflection: {e}")
 
     def _format_result(self, result: ReflectionResult) -> Dict[str, Any]:
         """Format ReflectionResult for API response."""
