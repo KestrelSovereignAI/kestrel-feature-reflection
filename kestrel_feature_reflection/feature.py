@@ -261,6 +261,7 @@ class ReflectionFeature(Feature):
                 conversation_store=conversation_store,
                 episode_store=episode_store,
                 agent_id=agent_id,
+                privacy_owner=self.agent,
             )
             logger.info("ReflectionFeature initialized with InteractionAnalyzer")
         else:
@@ -441,6 +442,9 @@ class ReflectionFeature(Feature):
             id=str(uuid.uuid4()),
             trigger="on_demand",
             started_at=datetime.utcnow(),
+            source_privacy_epoch=(
+                self.agent._get_privacy_policy_epoch() if self._db_helper else None
+            ),
         )
 
         try:
@@ -510,13 +514,19 @@ class ReflectionFeature(Feature):
             await self._persist_reflection(result)
             return self._reflect_to_tool_result(result)
 
+    def _source_policy_is_current(self, result: ReflectionResult) -> bool:
+        """Use Core's installation epoch so returning to a mode cannot revive old work."""
+        return bool(result.source_privacy_epoch) and (
+            result.source_privacy_epoch == self.agent._get_privacy_policy_epoch()
+        )
+
     async def _persist_reflection(self, result: ReflectionResult) -> None:
         """Store reflection session and insights to the database."""
         if not self._db_helper:
             return
 
         async with self.agent.memory_system.durable_writes() as allowed:
-            if not allowed:
+            if not allowed or not self._source_policy_is_current(result):
                 return
 
             try:
@@ -570,6 +580,10 @@ class ReflectionFeature(Feature):
             count so the agent can't narrate "everything's fine" while
             the action list contains CRITICAL items.
         """
+        if self._db_helper and not self._source_policy_is_current(result):
+            return ToolResult.failed(
+                "Reflection's source privacy policy is no longer current; results were discarded."
+            )
         legacy = self._format_result(result)
         summary = legacy.get("summary") or {}
         critical = summary.get("critical_failures", 0) or 0

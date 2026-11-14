@@ -39,8 +39,7 @@ class MindChecker(HealthChecker):
         )
 
         try:
-            storage = getattr(self.agent, 'storage', None)
-            conv_store = getattr(storage, 'conversation', None) if storage else None
+            conv_store = self.agent.privacy_agent
 
             if not conv_store:
                 check.status = CheckStatus.SKIP

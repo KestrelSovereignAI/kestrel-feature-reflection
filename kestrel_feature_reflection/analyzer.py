@@ -13,10 +13,13 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
-from kestrel_sovereign.conversation_speakers import project_conversation_message
-from kestrel_sovereign.security.input_guardrails import wrap_user_input
+from kestrel_sovereign.conversation_speakers import (
+    is_untrusted_conversation_speaker,
+    project_conversation_message,
+)
+from kestrel_sovereign.security.input_guardrails import extract_raw_user_content, wrap_user_input
 
-from .models import Insight, InsightType
+from .models import Insight, InsightType, ReflectionPrivacyChanged
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +99,7 @@ class InteractionAnalyzer:
         conversation_store,
         episode_store=None,
         agent_id: str = "",
+        privacy_owner=None,
     ):
         """
         Initialize the analyzer.
@@ -105,11 +109,13 @@ class InteractionAnalyzer:
             conversation_store: Store for conversation history
             episode_store: Store for memory episodes (optional)
             agent_id: Agent identifier for filtering
+            privacy_owner: Native owner of the live policy and source installation
         """
         self.llm = llm_service
         self.conversations = conversation_store
         self.episodes = episode_store
         self.agent_id = agent_id
+        self.privacy_owner = privacy_owner
 
     async def analyze(
         self,
@@ -131,6 +137,10 @@ class InteractionAnalyzer:
             List of Insight objects
         """
         logger.info(f"Starting interaction analysis: scope={scope}, depth={depth}")
+        if self.privacy_owner is None:
+            raise RuntimeError("Reflection analysis requires a native privacy owner")
+        source_epoch = self.privacy_owner._get_privacy_policy_epoch()
+        source_local_only = not self.privacy_owner.privacy_agent.can_use_cloud()
 
         # Load interactions based on scope
         interactions = await self._load_interactions(scope, max_interactions)
@@ -142,6 +152,8 @@ class InteractionAnalyzer:
         episodes = []
         if self.episodes:
             episodes = await self._load_episodes(scope, max_episodes)
+        if source_epoch != self.privacy_owner._get_privacy_policy_epoch():
+            raise ReflectionPrivacyChanged("Reflection's source privacy policy changed during analysis")
 
         # Build analysis prompt
         prompt = self._build_prompt(interactions, episodes, depth)
@@ -151,8 +163,10 @@ class InteractionAnalyzer:
             response = await self.llm.generate(
                 system_prompt="You are an AI assistant performing self-reflection analysis. Respond only with valid JSON.",
                 user_prompt=prompt,
-                force_local_only=False,  # Use best available model
+                force_local_only=source_local_only,
             )
+            if source_epoch != self.privacy_owner._get_privacy_policy_epoch():
+                raise ReflectionPrivacyChanged("Reflection's source privacy policy changed during analysis")
 
             # Handle different response types
             response_text = response if isinstance(response, str) else response.content
@@ -162,6 +176,8 @@ class InteractionAnalyzer:
             logger.info(f"Generated {len(insights)} insights from analysis")
             return insights
 
+        except ReflectionPrivacyChanged:
+            raise
         except Exception as e:
             logger.error(f"Analysis failed: {e}")
             return []
@@ -278,16 +294,17 @@ class InteractionAnalyzer:
         # Summarize interactions
         interaction_lines = []
         for i, msg in enumerate(interactions[-50:], 1):  # Limit to last 50
-            content = msg.get("content", "")
-            # Truncate long messages
-            if len(content) > 500:
-                content = content[:500] + "..."
-            role, content = project_conversation_message(
-                {**msg, "content": content}, wrap_user_input
-            )
+            role, content = project_conversation_message(msg, wrap_user_input)
+            quoted = is_untrusted_conversation_speaker(msg.get("role", "user"))
+            # Select the canonical sent form first, then bound its excerpt.
+            # Rebuild quoted boundaries after clipping so they stay complete.
+            excerpt = extract_raw_user_content(content) if quoted else content
+            if len(excerpt) > 500:
+                excerpt = excerpt[:500] + "..."
+            content = wrap_user_input(excerpt) if quoted else excerpt
 
             # Include metadata hints if available
-            metadata = msg.get("metadata", {})
+            metadata = msg.get("metadata") or {}
             emotional = ""
             if metadata.get("emotional_valence"):
                 valence = metadata["emotional_valence"]

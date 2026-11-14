@@ -22,6 +22,10 @@ Conversation reads go through the live privacy-aware conversation owner.
 Reflection sessions and insights use MemorySystem's existing persistence
 permission and hold its privacy-transition lock through both original writes.
 EPHEMERAL, ISOLATED and DEIDENTIFIED modes do not persist these derivatives.
+Analysis retains Core's original privacy installation and its local-only model
+requirement. A policy change discards old results before persistence or delivery,
+even if the agent later returns to the same mode. Selected conversation excerpts
+stay bounded after canonical rendering, with complete escaped input boundaries.
 
 Tests cover native SQLite, privacy transitions, genuine native MCP source rows
 and prompt construction with generation disabled. These checks do not establish

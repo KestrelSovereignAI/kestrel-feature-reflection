@@ -16,6 +16,10 @@ from typing import List, Optional, Dict, Any
 import json
 
 
+class ReflectionPrivacyChanged(RuntimeError):
+    """The original privacy installation changed while analysis was in flight."""
+
+
 # =============================================================================
 # Layer 4 Reflection Enums
 # =============================================================================
@@ -155,6 +159,8 @@ class ReflectionResult:
     layers_completed: int = 0
     stopped_at_layer: Optional[ReflectionLayer] = None
     error: Optional[str] = None
+    # Producer-owned policy installation; never supplied by generated insights.
+    source_privacy_epoch: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
