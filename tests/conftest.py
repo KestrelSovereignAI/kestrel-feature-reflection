@@ -4,8 +4,6 @@ from kestrel_sovereign.storage.memory_system import MemorySystem
 
 from kestrel_feature_reflection.feature import ReflectionFeature
 
-pytest_plugins = ["kestrel_sovereign.testing.fixtures"]
-
 
 @pytest.fixture
 async def reflection_writer(native_tool_effect_agent):
