@@ -14,7 +14,7 @@ classifiers = [
 dependencies = [
     # Reflection uses Core's canonical external-speaker projection and input
     # boundaries, delivered with the native MCP external-exchange contract.
-    "kestrel-sovereign>=0.66.0,<1",
+    "kestrel-sovereign>=0.66.1,<1",
     "kestrel-sovereign-sdk>=0.14.1,<1",
     "aiosqlite>=0.21.0",
 ]

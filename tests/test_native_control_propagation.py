@@ -21,7 +21,13 @@ def original_authority_rejection(feature, carrier):
     try:
         feature.agent._get_privacy_transition_lock().require_native_scope(None)
     except ExecutionAuthorityError as error:
-        result = error if carrier == "direct" else ExceptionGroup("original native control", [error])
+        if carrier == "timeout":
+            try:
+                raise TimeoutError("Original authority carried by a timeout") from error
+            except TimeoutError as timeout:
+                result = timeout
+        else:
+            result = error if carrier == "direct" else ExceptionGroup("original native control", [error])
         assert is_execution_control_error(result)
         return result
     pytest.fail("Core accepted an absent original native scope")
@@ -156,7 +162,7 @@ async def test_registered_stop_and_ticket_approval_keep_native_control(
     assert captured.value is error, "Reflection erased native control at a registered boundary"
 
 
-@pytest.mark.parametrize("carrier", ["direct", "group"])
+@pytest.mark.parametrize("carrier", ["direct", "group", "timeout"])
 @pytest.mark.parametrize("boundary", [
     "guidance", "insight", "proposal", "actionable", "ticket_handler",
     "self_model_pointer", "self_model_handler", "self_modify_approval",
