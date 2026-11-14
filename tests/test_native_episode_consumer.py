@@ -2,8 +2,8 @@
 from uuid import uuid4
 
 import pytest
-from kestrel_sovereign.storage.memory_models import MemoryEpisode
 from kestrel_sovereign.privacy import PrivacyMode
+from kestrel_sovereign.storage.memory_models import MemoryEpisode
 
 
 @pytest.mark.asyncio
