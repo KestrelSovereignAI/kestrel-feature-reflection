@@ -13,12 +13,14 @@ entry point group.
 
 ## Conversation and memory boundaries
 
-Version 0.4 requires Core 0.66.0 or newer. Reflection uses Core's canonical
+Version 0.4 requires Core 0.66.1 or newer. Reflection uses Core's canonical
 speaker projection and escaped input boundaries. Connected clients' external
 assistant transcripts remain quoted external data, rather than Kestrel's own
 responses or actions. Memory excerpts are quoted as data as well.
 
 Conversation reads go through the live privacy-aware conversation owner.
+EPHEMERAL mode also excludes durable episode context using Core's existing
+privacy configuration predicate.
 Reflection sessions and insights use MemorySystem's existing persistence
 permission and hold its privacy-transition lock through both original writes.
 EPHEMERAL, ISOLATED and DEIDENTIFIED modes do not persist these derivatives.

@@ -258,6 +258,10 @@ class InteractionAnalyzer:
         """Load memory episodes based on time scope."""
         if self._episode_store_provider is None:
             return []
+        if self.privacy_owner is None:
+            raise RuntimeError("Reflection memory reads require a native privacy owner")
+        if self.privacy_owner.privacy_agent.privacy_config.is_ephemeral():
+            return []
 
         try:
             store = self._episode_store_provider()

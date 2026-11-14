@@ -76,7 +76,9 @@ class ApprovalHandler:
 
             return approved
 
-        except TimeoutError:
+        except TimeoutError as error:
+            if is_execution_control_error(error):
+                raise
             proposal.rejection_reason = "Approval request timed out"
             return False
         except Exception as e:
