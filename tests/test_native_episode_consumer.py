@@ -8,9 +8,12 @@ from kestrel_sovereign.storage.memory_models import MemoryEpisode
 @pytest.mark.asyncio
 async def test_original_core_episodes_reach_reflection(reflection_writer):
     feature = reflection_writer
+    original_analyzer = feature.analyzer
+    assert feature._mind_checker.analyzer is original_analyzer
     await feature.agent.memory_system.initialize()
     feature.agent.memory_consolidator = feature.agent.memory_system.consolidator
-    feature._init_analyzer()
+    assert feature.analyzer is original_analyzer
+    assert feature._mind_checker.analyzer is original_analyzer
     episode = MemoryEpisode(id=uuid4().hex, agent_id=feature.agent.did,
                             title="Owned episode input", summary="Owned stored memory excerpt")
     await feature.agent.memory_consolidator._save_episode(episode)

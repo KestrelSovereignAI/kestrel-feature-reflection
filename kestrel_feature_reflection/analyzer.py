@@ -101,7 +101,7 @@ class InteractionAnalyzer:
         self,
         llm_service,
         conversation_store,
-        episode_store=None,
+        episode_store_provider=None,
         agent_id: str = "",
         privacy_owner=None,
     ):
@@ -111,13 +111,13 @@ class InteractionAnalyzer:
         Args:
             llm_service: LLMService instance for generation
             conversation_store: Store for conversation history
-            episode_store: Store for memory episodes (optional)
+            episode_store_provider: Resolve the optional Core store after memory startup
             agent_id: Agent identifier for filtering
             privacy_owner: Native owner of the live policy and source installation
         """
         self.llm = llm_service
         self.conversations = conversation_store
-        self.episodes = episode_store
+        self._episode_store_provider = episode_store_provider
         self.agent_id = agent_id
         self.privacy_owner = privacy_owner
 
@@ -153,9 +153,7 @@ class InteractionAnalyzer:
             return []
 
         # Load episodes if available
-        episodes = []
-        if self.episodes:
-            episodes = await self._load_episodes(scope, max_episodes)
+        episodes = await self._load_episodes(scope, max_episodes)
         if source_epoch != self.privacy_owner._get_privacy_policy_epoch():
             raise ReflectionPrivacyChanged("Reflection's source privacy policy changed during analysis")
 
@@ -258,11 +256,14 @@ class InteractionAnalyzer:
         max_count: int,
     ) -> List[Dict[str, Any]]:
         """Load memory episodes based on time scope."""
-        if not self.episodes:
+        if self._episode_store_provider is None:
             return []
 
         try:
-            episodes = await self.episodes.get_episodes(limit=max_count)
+            store = self._episode_store_provider()
+            if store is None:
+                return []
+            episodes = await store.get_episodes(limit=max_count)
 
             # Convert to list of dicts if needed
             result = []
