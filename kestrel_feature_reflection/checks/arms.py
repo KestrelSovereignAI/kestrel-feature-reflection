@@ -3,6 +3,7 @@ import asyncio
 import uuid
 from typing import List
 
+from kestrel_sdk.tools import ToolResultStatus
 from kestrel_sovereign.execution_custody import is_execution_control_error
 
 from ..models import CheckStatus, HealthCheck, ReflectionLayer, Severity
@@ -504,22 +505,14 @@ class ArmsChecker(HealthChecker):
                 check.message = "SecurityFeature not loaded"
                 return check
 
-            # Try to list permissions or check security status
-            permissions = None
-            if hasattr(security_feature, 'list_permissions'):
-                method = security_feature.list_permissions
-                if asyncio.iscoroutinefunction(method):
-                    permissions = await method()
-                else:
-                    permissions = method()
-            elif hasattr(security_feature, 'get_permissions'):
-                method = security_feature.get_permissions
-                if asyncio.iscoroutinefunction(method):
-                    permissions = await method()
-                else:
-                    permissions = method()
-            elif hasattr(security_feature, 'permissions'):
-                permissions = security_feature.permissions
+            envelope = await security_feature.list_permissions()
+            if envelope.status is not ToolResultStatus.OK:
+                check.status = CheckStatus.FAIL
+                check.severity = Severity.CRITICAL
+                check.message = f"Cannot read security permissions: {envelope.error}"
+                check.duration_ms = self._elapsed_ms(start)
+                return check
+            permissions = envelope.data
 
             # Check for approval queue
             approval_queue = getattr(security_feature, 'approval_queue', None)
@@ -529,7 +522,7 @@ class ArmsChecker(HealthChecker):
 
             details = {}
             if permissions:
-                details["permission_count"] = len(permissions) if isinstance(permissions, (list, dict)) else 1
+                details["permission_count"] = permissions["tools_count"]
             if approval_queue is not None:
                 details["approval_queue_active"] = True
             if rate_limiter is not None:
