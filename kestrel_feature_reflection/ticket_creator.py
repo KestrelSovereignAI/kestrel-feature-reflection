@@ -9,12 +9,17 @@ approval queue.
 import logging
 import os
 from datetime import datetime
-from typing import Optional, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, Protocol
+
+from kestrel_sovereign.execution_custody import is_execution_control_error
 
 if TYPE_CHECKING:
-    from .models import ImprovementProposal  # noqa: F401
     from kestrel_sovereign.features.security.feature import SecurityFeature
-    from .models import Insight
+
+    from .models import (
+        ImprovementProposal,  # noqa: F401
+        Insight,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +126,8 @@ class TicketCreator:
                 timeout=timeout,
             )
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Approval request failed: {e}")
             return None
 
@@ -188,6 +195,8 @@ class TicketCreator:
                 timeout=timeout,
             )
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Approval request failed: {e}")
             return None
 

@@ -11,15 +11,17 @@ Handles storage and retrieval of:
 import json
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
+
+from kestrel_sovereign.execution_custody import is_execution_control_error
 
 from .models import (
+    BehaviorRule,
+    ChangeType,
+    ImprovementProposal,
     Insight,
     InsightType,
     ReflectionSession,
-    ImprovementProposal,
-    BehaviorRule,
-    ChangeType,
 )
 
 logger = logging.getLogger(__name__)
@@ -363,6 +365,8 @@ class ReflectionDatabaseHelper:
             return [row[0] for row in rows]
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Failed to get active guidance: {e}")
             return []
 
@@ -407,6 +411,8 @@ class ReflectionDatabaseHelper:
             )
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Failed to get insight by ID {insight_id}: {e}")
             return None
 
@@ -456,6 +462,8 @@ class ReflectionDatabaseHelper:
                 applied_at=datetime.fromisoformat(row[12]) if row[12] else None,
             )
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Failed to get proposal by ID {proposal_id}: {e}")
             return None
 
@@ -512,5 +520,7 @@ class ReflectionDatabaseHelper:
             return insights
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Failed to get actionable insights: {e}")
             return []

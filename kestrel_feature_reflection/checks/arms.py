@@ -2,10 +2,11 @@
 import asyncio
 import uuid
 from typing import List
+
 from kestrel_sovereign.execution_custody import is_execution_control_error
 
+from ..models import CheckStatus, HealthCheck, ReflectionLayer, Severity
 from .base import HealthChecker
-from ..models import HealthCheck, ReflectionLayer, CheckStatus, Severity
 
 
 class ArmsChecker(HealthChecker):
@@ -135,7 +136,11 @@ class ArmsChecker(HealthChecker):
         )
 
         try:
-            from kestrel_sovereign.security.encryption import get_fernet, encrypt_string_fernet, decrypt_string_fernet
+            from kestrel_sovereign.security.encryption import (
+                decrypt_string_fernet,
+                encrypt_string_fernet,
+                get_fernet,
+            )
 
             fernet = get_fernet()
             if fernet is None:

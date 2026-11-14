@@ -8,6 +8,8 @@ economic status (paid tier, revenue share, etc.).
 import logging
 from typing import Protocol
 
+from kestrel_sovereign.execution_custody import is_execution_control_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,6 +68,8 @@ class EconomicGate:
             has_share = self.wallet.has_revenue_share()
             return is_paid or has_share
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Economic gate check failed: {e}")
             return False
 
@@ -81,6 +85,8 @@ class EconomicGate:
         try:
             return self.wallet.is_paid_tier()
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Economic gate check failed: {e}")
             return False
 

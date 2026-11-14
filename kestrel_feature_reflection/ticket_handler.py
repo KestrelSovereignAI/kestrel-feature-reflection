@@ -5,12 +5,13 @@ Manages the creation of GitHub issues from actionable insights.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
+from kestrel_sovereign.execution_custody import is_execution_control_error
 from kestrel_sovereign.kestrel_config.constants import APPROVAL_TIMEOUT_DEFAULT
 
-from .models import Insight
 from .db_helpers import ReflectionDatabaseHelper
+from .models import Insight
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,8 @@ class TicketHandler:
             }
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Failed to create ticket: {e}", exc_info=True)
             return {
                 "success": False,
