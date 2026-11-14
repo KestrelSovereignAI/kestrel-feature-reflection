@@ -417,48 +417,26 @@ class ArmsChecker(HealthChecker):
         start = self._start_timer()
 
         try:
-            # Look for WebSearchFeature or web search tool
             websearch_feature = self.agent.features.get("WebSearchFeature")
-
-            if not websearch_feature:
-                # Try to find it in tool registry
-                registry = getattr(self.agent, 'tool_registry', None)
-                if registry and hasattr(registry, 'get_tool'):
-                    websearch_tool = registry.get_tool('web_search') or registry.get_tool('search')
-                    if websearch_tool:
-                        websearch_feature = websearch_tool
-
-            if not websearch_feature:
-                check.status = CheckStatus.SKIP
+            if websearch_feature is None:
                 check.message = "WebSearchFeature not loaded"
                 return check
 
-            # Actually perform a search
-            search_method = None
-            for method_name in ['search', 'web_search', 'query']:
-                if hasattr(websearch_feature, method_name):
-                    search_method = getattr(websearch_feature, method_name)
-                    break
-
-            if search_method:
-                # Use a simple test query
-                if asyncio.iscoroutinefunction(search_method):
-                    result = await search_method("kestrel ai agent")
-                else:
-                    result = search_method("kestrel ai agent")
-
-                if result:
-                    result_count = len(result) if isinstance(result, list) else 1
+            envelope = await websearch_feature.search("kestrel ai agent")
+            if envelope.status is not ToolResultStatus.OK:
+                check.status = CheckStatus.FAIL
+                check.severity = Severity.HIGH
+                check.message = f"Web search failed: {envelope.error}"
+            else:
+                results = envelope.data["results"]
+                if results:
                     check.status = CheckStatus.PASS
-                    check.message = f"Web search working ({result_count} results)"
-                    check.details = {"result_count": result_count}
+                    check.message = f"Web search working ({len(results)} results)"
+                    check.details = {"result_count": len(results)}
                 else:
                     check.status = CheckStatus.WARN
                     check.severity = Severity.MEDIUM
                     check.message = "Web search returned no results"
-            else:
-                check.status = CheckStatus.WARN
-                check.message = "WebSearchFeature has no search method"
 
         except Exception as e:
             if is_execution_control_error(e):

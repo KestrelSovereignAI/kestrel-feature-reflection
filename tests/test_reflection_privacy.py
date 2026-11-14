@@ -168,3 +168,33 @@ async def test_decryption_check_uses_the_same_private_conversation(reflection_wr
     check = await feature._memory_checker.check_conversation_decryption()
     assert check.message == f"Can read {len(expected)} messages", (
         "Decryption check bypassed the current privacy-aware conversation")
+
+
+@pytest.mark.parametrize("transition", ["before", "during", "aba"])
+async def test_stored_insight_reads_obey_the_original_privacy_epoch(reflection_writer, monkeypatch, transition):
+    from kestrel_sdk.tools import ToolResultStatus
+    feature = reflection_writer
+    result = reflection_input(feature)
+    await feature._persist_reflection(result)
+    original = feature._db_helper.get_insights
+    reads = []
+    async def change(mode):
+        await feature.agent.set_privacy_mode(mode)
+        assert feature.agent.privacy_mode is mode, "Original Core privacy transition did not apply"
+    async def read_then_change(**kwargs):
+        rows = await original(**kwargs)
+        reads.append(True)
+        assert rows, "Probe did not store an original insight"
+        if transition != "before":
+            await change(PrivacyMode.EPHEMERAL)
+            if transition == "aba":
+                await change(PrivacyMode.NORMAL)
+        return rows
+    monkeypatch.setattr(feature._db_helper, "get_insights", read_then_change)
+    if transition == "before":
+        await change(PrivacyMode.EPHEMERAL)
+    response = await feature.get_insights()
+    assert response.status is ToolResultStatus.ERROR, "Stored insights crossed an ephemeral or changed source policy"
+    assert "Owned derivative" not in str(response.data)
+    if transition == "before":
+        assert not reads, "Ephemeral insight retrieval still touched durable memory"

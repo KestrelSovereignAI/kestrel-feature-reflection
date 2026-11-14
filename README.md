@@ -19,8 +19,9 @@ assistant transcripts remain quoted external data, rather than Kestrel's own
 responses or actions. Memory excerpts are quoted as data as well.
 
 Conversation reads go through the live privacy-aware conversation owner.
-EPHEMERAL mode also excludes durable episode context using Core's existing
-privacy configuration predicate.
+EPHEMERAL mode also excludes durable episode context and stored insights using
+Core's existing privacy configuration predicate. Insight reads discard their
+results if Core's privacy installation changes during retrieval.
 Reflection sessions and insights use MemorySystem's existing persistence
 permission and hold its privacy-transition lock through both original writes.
 EPHEMERAL, ISOLATED and DEIDENTIFIED modes do not persist these derivatives.

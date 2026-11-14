@@ -20,8 +20,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from kestrel_sdk.tools.result import ToolResultStatus
+
 from kestrel_feature_reflection.feature import ReflectionFeature
 
 
@@ -123,42 +123,54 @@ async def test_mind_checker_threads_scope_to_analyzer():
 # get_insights(type_filter=...)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_get_insights_invalid_type_filter_fails_clearly():
-    feat = _make_feature()
-    feat._db_helper = MagicMock()
-    feat._db_helper.get_insights = AsyncMock(return_value=[])
+@pytest.fixture
+async def stored_validation_insights(reflection_writer):
+    from uuid import uuid4
 
-    res = await feat.get_insights(type_filter="successes")  # typo: not an enum
+    from kestrel_feature_reflection.models import (
+        Insight,
+        InsightType,
+        ReflectionSession,
+    )
+    feature = reflection_writer
+    session = ReflectionSession(id=uuid4().hex, trigger="owned-parameter-validation")
+    rows = [Insight(id=uuid4().hex, type=kind, title=kind.value,
+                    description="Owned validation input", confidence=0.9)
+            for kind in (InsightType.FAILURE, InsightType.PATTERN)]
+    async with feature.agent.memory_system.durable_writes() as allowed:
+        assert allowed
+        await feature._db_helper.store_session(session)
+        for row in rows:
+            await feature._db_helper.store_insight(row, session.id)
+    return feature, rows
+
+
+@pytest.mark.asyncio
+async def test_get_insights_invalid_type_filter_fails_clearly(reflection_writer):
+    feat = reflection_writer
+    # If validation touches SQL, this real dropped table produces a DB error
+    # instead of the required invalid-type response.
+    await feat._db.execute("DROP TABLE reflection_insights")
+    res = await feat.get_insights(type_filter="successes")
     assert res.status is ToolResultStatus.ERROR
     assert "Invalid type_filter" in (res.error or "")
     assert "pattern" in (res.error or "")
-    # must NOT have hit the DB with the bad value
-    feat._db_helper.get_insights.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_get_insights_valid_type_filter_normalized_and_passed():
-    feat = _make_feature()
-    feat._db_helper = MagicMock()
-    feat._db_helper.get_insights = AsyncMock(return_value=[])
-
+async def test_get_insights_valid_type_filter_normalized_and_passed(stored_validation_insights):
+    feat, rows = stored_validation_insights
     res = await feat.get_insights(type_filter="FAILURE")
     assert res.status is ToolResultStatus.OK
-    kwargs = feat._db_helper.get_insights.await_args.kwargs
-    assert kwargs["type_filter"] == "failure"
+    assert [row["id"] for row in res.data["insights"]] == [rows[0].id]
 
 
 @pytest.mark.asyncio
-async def test_get_insights_no_filter_still_works():
-    feat = _make_feature()
-    feat._db_helper = MagicMock()
-    feat._db_helper.get_insights = AsyncMock(return_value=[])
-
+async def test_get_insights_no_filter_still_works(stored_validation_insights):
+    feat, rows = stored_validation_insights
     res = await feat.get_insights()
     assert res.status is ToolResultStatus.OK
-    kwargs = feat._db_helper.get_insights.await_args.kwargs
-    assert kwargs["type_filter"] is None
+    assert {row["id"] for row in res.data["insights"]} == {row.id for row in rows}
 
 
 # ---------------------------------------------------------------------------
