@@ -10,6 +10,7 @@ Uses LLM to analyze past interactions and generate insights about:
 
 import json
 import logging
+from kestrel_sovereign.execution_custody import is_execution_control_error
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
@@ -179,6 +180,8 @@ class InteractionAnalyzer:
         except ReflectionPrivacyChanged:
             raise
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Analysis failed: {e}")
             return []
 
@@ -241,6 +244,8 @@ class InteractionAnalyzer:
             return interactions
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Failed to load interactions: {e}")
             return []
 
@@ -281,6 +286,8 @@ class InteractionAnalyzer:
             return result
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Failed to load episodes: {e}")
             return []
 
@@ -461,5 +468,7 @@ Respond with JSON containing insights about this error.
             return self._parse_insights(response_text)
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Error analysis failed: {e}")
             return []

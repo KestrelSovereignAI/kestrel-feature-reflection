@@ -6,6 +6,7 @@ sleep cycle for automatic nightly reflection.
 """
 
 import logging
+from kestrel_sovereign.execution_custody import is_execution_control_error
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,8 @@ class ReflectionSleepHook:
             return result
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Pre-sleep reflection error: {e}")
             return {
                 "success": False,
@@ -123,6 +126,8 @@ class ReflectionSleepHook:
             return result
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Post-consolidation reflection error: {e}")
             return {
                 "success": False,

@@ -160,7 +160,7 @@ class ReflectionResult:
     stopped_at_layer: Optional[ReflectionLayer] = None
     error: Optional[str] = None
     # Producer-owned policy installation; never supplied by generated insights.
-    source_privacy_epoch: Optional[str] = None
+    source_privacy_epoch: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {

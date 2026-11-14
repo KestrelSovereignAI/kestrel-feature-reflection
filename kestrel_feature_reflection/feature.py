@@ -13,6 +13,7 @@ This hooks into the sleep cycle for automatic nightly reflection.
 """
 
 import logging
+from kestrel_sovereign.execution_custody import is_execution_control_error
 import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional, List
@@ -508,6 +509,8 @@ class ReflectionFeature(Feature):
             return self._reflect_to_tool_result(result)
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Reflection failed: {e}")
             result.error = str(e)
             result.completed_at = datetime.utcnow()
@@ -561,6 +564,8 @@ class ReflectionFeature(Feature):
                     logger.info(f"Persisted reflection session {result.id} with {len(insights)} insights")
 
             except Exception as e:
+                if is_execution_control_error(e):
+                    raise
                 logger.warning(f"Failed to persist reflection: {e}")
 
     def _format_result(self, result: ReflectionResult) -> Dict[str, Any]:
@@ -675,6 +680,8 @@ class ReflectionFeature(Feature):
                 limit=limit,
             )
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Failed to get insights: {e}")
             return ToolResult.failed(str(e))
 
@@ -794,6 +801,8 @@ class ReflectionFeature(Feature):
         try:
             rules = await self._db_helper.get_behavior_rules(active_only=active_only)
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Failed to get behavior rules: {e}")
             return ToolResult.failed(str(e))
 
@@ -934,7 +943,8 @@ class ReflectionFeature(Feature):
         """Age-prune reflection_sessions + reflection_insights (#1674 P4).
 
         Opt-in via ``[reflection.retention].enabled``; best-effort — a failure
-        here must never break the sleep reflection it rides on. Returns delete
+        here must not hide native control; ordinary failures leave the sleep
+        reflection available. Returns delete
         counts (zeros when disabled / unavailable)."""
         none = {"sessions_deleted": 0, "insights_deleted": 0}
         if not self._db_helper:
@@ -956,7 +966,9 @@ class ReflectionFeature(Feature):
                     result["sessions_deleted"], result["insights_deleted"],
                 )
             return result
-        except Exception as e:  # noqa: BLE001 - retention must not break sleep
+        except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.warning("[reflection.retention] prune failed: %s", e)
             return none
 

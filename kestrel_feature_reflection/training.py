@@ -6,12 +6,15 @@ Handles intensive reflection training sessions for rapid self-improvement.
 
 import asyncio
 import logging
+from kestrel_sovereign.execution_custody import is_execution_control_error
 import uuid
 from typing import Dict, Any, List
 
 from kestrel_sovereign.kestrel_config.constants import APPROVAL_TIMEOUT_SHORT
 
-from .models import Insight, InsightType
+from kestrel_sdk.tools import ToolResultStatus
+
+from .models import CheckStatus, Insight, InsightType, Severity
 from .formatters import ReflectionResultFormatter
 
 logger = logging.getLogger(__name__)
@@ -65,9 +68,17 @@ class TrainingManager:
             # format_reflection_result dict that this manager consumes
             # via .get(...) lives under .data.
             reflection_envelope = await self.feature.reflect(scope="all", depth=depth)
-            reflection_result = (
-                reflection_envelope.data if reflection_envelope.data is not None else {}
-            )
+            if reflection_envelope.status is ToolResultStatus.ERROR:
+                return {
+                    "success": False,
+                    "error": reflection_envelope.error,
+                    "iterations_completed": len(results),
+                    "health_trend": results,
+                    "tickets_created": tickets_created,
+                }
+            reflection_result = reflection_envelope.data
+            if not isinstance(reflection_result, dict) or not reflection_result:
+                raise TypeError("Reflection training requires a nonempty reflection result")
 
             # Extract health score
             iteration_result = self._analyze_iteration_health(reflection_result, i)
@@ -116,15 +127,15 @@ class TrainingManager:
         passed = 0
 
         for layer_name in ["arms", "memory", "mind"]:
-            layer = reflection_result.get(layer_name, {})
+            layer = reflection_result.get(layer_name) or {}
             for check in layer.get("checks", []):
                 status = check.get("status", "")
                 severity = check.get("severity", "")
-                if status == "FAIL" and severity == "CRITICAL":
+                if status == CheckStatus.FAIL.value and severity == Severity.CRITICAL.value:
                     critical += 1
-                elif status in ["FAIL", "WARN"]:
+                elif status in [CheckStatus.FAIL.value, CheckStatus.WARN.value]:
                     warn += 1
-                elif status == "PASS":
+                elif status == CheckStatus.PASS.value:
                     passed += 1
 
         return {
@@ -132,7 +143,7 @@ class TrainingManager:
             "passed": passed,
             "warn": warn,
             "critical": critical,
-            "healthy": critical == 0 and warn == 0,
+            "healthy": passed > 0 and critical == 0 and warn == 0,
         }
 
     async def _create_tickets_for_actions(
@@ -179,6 +190,8 @@ class TrainingManager:
                         tickets.append(url)
 
             except Exception as e:
+                if is_execution_control_error(e):
+                    raise
                 logger.warning(f"Failed to create ticket: {e}")
 
         return tickets

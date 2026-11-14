@@ -2,6 +2,7 @@
 import asyncio
 import uuid
 from typing import List
+from kestrel_sovereign.execution_custody import is_execution_control_error
 
 from .base import HealthChecker
 from ..models import HealthCheck, ReflectionLayer, CheckStatus, Severity
@@ -54,6 +55,8 @@ class ArmsChecker(HealthChecker):
             check.details = {"provider": getattr(llm, 'active_provider', 'unknown')}
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.FAIL
             check.severity = Severity.CRITICAL
             check.message = f"LLM unreachable: {e}"
@@ -111,6 +114,8 @@ class ArmsChecker(HealthChecker):
             check.message = "Storage read/write working"
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.FAIL
             check.severity = Severity.CRITICAL
             check.message = f"Storage error: {e}"
@@ -155,6 +160,8 @@ class ArmsChecker(HealthChecker):
                 check.file_path = ".env"
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.FAIL
             check.severity = Severity.CRITICAL
             check.message = f"Encryption error: {e}"
@@ -207,6 +214,8 @@ class ArmsChecker(HealthChecker):
             check.message = f"{len(tools)} tools registered"
             check.details = {"count": len(tools)}
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.WARN
             check.message = f"Tool check error: {e}"
 
@@ -299,6 +308,8 @@ class ArmsChecker(HealthChecker):
                 check.message = "GitHubFeature missing get_self_repo_info method"
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             error_str = str(e).lower()
             if "401" in error_str or "unauthorized" in error_str or "authentication" in error_str:
                 check.status = CheckStatus.FAIL
@@ -377,6 +388,8 @@ class ArmsChecker(HealthChecker):
                 check.file_path = "kestrel.toml"
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.FAIL
             check.severity = Severity.HIGH
             check.message = f"Model operations error: {e}"
@@ -442,6 +455,8 @@ class ArmsChecker(HealthChecker):
                 check.message = "WebSearchFeature has no search method"
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             error_str = str(e).lower()
             if "api key" in error_str or "unauthorized" in error_str:
                 check.status = CheckStatus.FAIL
@@ -526,6 +541,8 @@ class ArmsChecker(HealthChecker):
                 check.suggested_fix = "Verify security configuration"
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             check.status = CheckStatus.WARN
             check.severity = Severity.LOW
             check.message = f"Security check error: {e}"
