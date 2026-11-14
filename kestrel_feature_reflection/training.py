@@ -6,16 +6,15 @@ Handles intensive reflection training sessions for rapid self-improvement.
 
 import asyncio
 import logging
-from kestrel_sovereign.execution_custody import is_execution_control_error
 import uuid
-from typing import Dict, Any, List
-
-from kestrel_sovereign.kestrel_config.constants import APPROVAL_TIMEOUT_SHORT
+from typing import Any, Dict, List
 
 from kestrel_sdk.tools import ToolResultStatus
+from kestrel_sovereign.execution_custody import is_execution_control_error
+from kestrel_sovereign.kestrel_config.constants import APPROVAL_TIMEOUT_SHORT
 
-from .models import CheckStatus, Insight, InsightType, Severity
 from .formatters import ReflectionResultFormatter
+from .models import CheckStatus, Insight, InsightType, Severity
 
 logger = logging.getLogger(__name__)
 

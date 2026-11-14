@@ -13,11 +13,14 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from kestrel_sovereign.execution_custody import is_execution_control_error
 
 if TYPE_CHECKING:
-    from kestrel_sovereign.storage.providers.base import StorageProvider
     from kestrel_sovereign.features.security.feature import SecurityFeature
+    from kestrel_sovereign.storage.providers.base import StorageProvider
+
     from .models import Insight, SelfModel
 
 logger = logging.getLogger(__name__)
@@ -165,6 +168,8 @@ class SelfModelManager:
                 timeout=timeout,
             )
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Approval request failed: {e}")
             return False
 
@@ -221,7 +226,7 @@ class SelfModelManager:
         Returns:
             New proposed SelfModel
         """
-        from .models import SelfModel, InsightType
+        from .models import InsightType, SelfModel
 
         # Create a copy with incremented version
         new_model = SelfModel(
@@ -339,6 +344,8 @@ class SelfModelManager:
                 return data.get("cid")
             return None
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.warning(f"Failed to get model CID: {e}")
             return None
 

@@ -6,8 +6,9 @@ sleep cycle for automatic nightly reflection.
 """
 
 import logging
+from typing import Any, Dict, Optional
+
 from kestrel_sovereign.execution_custody import is_execution_control_error
-from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 

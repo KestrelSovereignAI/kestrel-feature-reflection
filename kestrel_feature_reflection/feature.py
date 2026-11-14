@@ -13,14 +13,14 @@ This hooks into the sleep cycle for automatic nightly reflection.
 """
 
 import logging
-from kestrel_sovereign.execution_custody import is_execution_control_error
 import uuid
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
 
+from kestrel_sdk.features.base import Feature, tool
 from kestrel_sdk.tools.base import ToolCategory
 from kestrel_sdk.tools.result import ToolResult
-from kestrel_sdk.features.base import Feature, tool
+from kestrel_sovereign.execution_custody import is_execution_control_error
 from kestrel_sovereign.features.storage_access import (
     resolve_feature_database,
 )
@@ -29,30 +29,33 @@ from kestrel_sovereign.kestrel_config.constants import (
     APPROVAL_TIMEOUT_SHORT,
 )
 
+from .analyzer import InteractionAnalyzer
+from .approval import ApprovalHandler
+from .checks import ArmsChecker, MemoryChecker, MindChecker
+from .db_helpers import ReflectionDatabaseHelper
+from .economics import ConfigurationError as EconomicsConfigError
+from .economics import EconomicGate
+from .formatters import ReflectionResultFormatter
 from .models import (
+    BehaviorRule,
+    ChangeType,
+    ImprovementProposal,
     Insight,
     InsightType,
-    ImprovementProposal,
-    ChangeType,
-    BehaviorRule,
+    LayerResult,
     # Layered reflection models
     ReflectionLayer,
     ReflectionResult,
-    LayerResult,
 )
-from .analyzer import InteractionAnalyzer
-from .checks import ArmsChecker, MemoryChecker, MindChecker
 from .prioritizer import ActionPrioritizer
-from .economics import EconomicGate, ConfigurationError as EconomicsConfigError
-from .ticket_creator import TicketCreator, ConfigurationError as TicketConfigError
-from .self_model import SelfModelManager, ConfigurationError as SelfModelConfigError
-from .db_helpers import ReflectionDatabaseHelper
-from .formatters import ReflectionResultFormatter
 from .prompts import format_training_summary
-from .approval import ApprovalHandler
-from .training import TrainingManager
-from .ticket_handler import TicketHandler
+from .self_model import ConfigurationError as SelfModelConfigError
+from .self_model import SelfModelManager
 from .self_model_handler import SelfModelHandler
+from .ticket_creator import ConfigurationError as TicketConfigError
+from .ticket_creator import TicketCreator
+from .ticket_handler import TicketHandler
+from .training import TrainingManager
 
 logger = logging.getLogger(__name__)
 

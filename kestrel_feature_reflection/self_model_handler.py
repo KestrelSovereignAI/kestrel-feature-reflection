@@ -5,8 +5,9 @@ Handles retrieval and updates of the agent's self-model.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
+from kestrel_sovereign.execution_custody import is_execution_control_error
 from kestrel_sovereign.kestrel_config.constants import APPROVAL_TIMEOUT_DEFAULT
 
 from .db_helpers import ReflectionDatabaseHelper
@@ -71,6 +72,8 @@ class SelfModelHandler:
                 }
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Failed to get self-model: {e}")
             return {"success": False, "error": str(e)}
 
@@ -148,6 +151,8 @@ class SelfModelHandler:
                 }
 
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Failed to update self-model: {e}")
             return {"success": False, "error": str(e)}
 

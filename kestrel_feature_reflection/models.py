@@ -9,11 +9,11 @@ Defines the core types for agent self-reflection:
 - Insight: A single observation from interaction analysis
 """
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Dict, Any
-import json
+from typing import Any, Dict, List, Optional
 
 
 class ReflectionPrivacyChanged(RuntimeError):

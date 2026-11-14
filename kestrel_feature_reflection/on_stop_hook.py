@@ -21,8 +21,8 @@ populated by kestrel-sovereign #1269. No storage round-trip.
 
 Design invariants:
 - **Fail-isolated.** STOP is post-yield; a reflection failure must never
-  surface to the user or break the turn. Every exit returns
-  ``HookOutput.allow()``.
+  surface to the user or break the turn. Ordinary failures return
+  ``HookOutput.allow()``; native authority and retirement control propagates.
 - **Single round.** One LLM call, one batch of tool calls, no follow-up
   LLM round. We capture facts, we don't start a sub-agent loop.
 - **Opt-out.** ``KESTREL_PER_TURN_REFLECTION_DISABLED=1`` disables it.
@@ -40,6 +40,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from kestrel_sdk.hooks.base import Hook, HookEvent, HookInput, HookOutput
+from kestrel_sovereign.execution_custody import is_execution_control_error
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,9 @@ def live_force_local_only(llm_service: Any) -> bool:
         return True
     try:
         return bool(provider())
-    except Exception:
+    except Exception as error:
+        if is_execution_control_error(error):
+            raise
         return True
 
 
@@ -214,10 +217,12 @@ class OnStopReflectionHook(Hook):
         self.agent = agent
 
     async def execute(self, input: HookInput) -> HookOutput:  # noqa: A002 (SDK contract)
-        """Capture facts learned this turn. Always returns allow()."""
+        """Capture facts; isolate ordinary failures while preserving native control."""
         try:
             await self._capture(input)
         except Exception as exc:  # never break the turn — STOP is post-yield
+            if is_execution_control_error(exc):
+                raise
             logger.warning(
                 f"[per-turn-reflection] swallowed error (turn unaffected): {exc}",
                 exc_info=True,
@@ -253,7 +258,9 @@ class OnStopReflectionHook(Hook):
                 continue
             try:
                 tools = get_tools()
-            except Exception:
+            except Exception as error:
+                if is_execution_control_error(error):
+                    raise
                 continue
             for t in tools or []:
                 tname = getattr(t, "name", None)
@@ -269,6 +276,8 @@ class OnStopReflectionHook(Hook):
                 t.schema.to_openai_format() for t in fact_tool_objs.values()
             ]
         except Exception as exc:
+            if is_execution_control_error(exc):
+                raise
             logger.debug(f"[per-turn-reflection] tool schema build failed: {exc}")
             return
 
@@ -424,6 +433,8 @@ class OnStopReflectionHook(Hook):
                 if not _is_denied(result):
                     executed += 1
             except Exception as exc:
+                if is_execution_control_error(exc):
+                    raise
                 logger.warning(
                     f"[per-turn-reflection] fact tool '{tname}' failed: {exc}"
                 )
@@ -465,6 +476,8 @@ class OnStopReflectionHook(Hook):
                 agent_did=getattr(agent, "did", None),
             )
         except Exception as exc:
+            if is_execution_control_error(exc):
+                raise
             logger.debug(f"[per-turn-reflection] observability log failed: {exc}")
 
 

@@ -9,11 +9,12 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+from kestrel_sovereign.execution_custody import is_execution_control_error
 from kestrel_sovereign.kestrel_config.constants import APPROVAL_TIMEOUT_DEFAULT
 
-from .models import ImprovementProposal, BehaviorRule, ChangeType
-from .prompts import format_approval_prompt
 from .db_helpers import ReflectionDatabaseHelper
+from .models import BehaviorRule, ChangeType, ImprovementProposal
+from .prompts import format_approval_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,8 @@ class ApprovalHandler:
             proposal.rejection_reason = "Approval request timed out"
             return False
         except Exception as e:
+            if is_execution_control_error(e):
+                raise
             logger.error(f"Approval request failed: {e}")
             proposal.rejection_reason = f"Approval error: {e}"
             return False

@@ -1,10 +1,11 @@
 """Layer 2: Memory - Knowledge/Context checks."""
-from typing import List
-from kestrel_sovereign.execution_custody import is_execution_control_error
 from hashlib import sha256
+from typing import List
 
+from kestrel_sovereign.execution_custody import is_execution_control_error
+
+from ..models import CheckStatus, HealthCheck, ReflectionLayer, Severity
 from .base import HealthChecker
-from ..models import HealthCheck, ReflectionLayer, CheckStatus, Severity
 
 
 class MemoryChecker(HealthChecker):

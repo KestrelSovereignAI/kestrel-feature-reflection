@@ -1,9 +1,10 @@
 """Layer 3: Mind - Cognitive checks."""
-from typing import List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
+
 from kestrel_sovereign.execution_custody import is_execution_control_error
 
+from ..models import CheckStatus, HealthCheck, InsightType, ReflectionLayer, Severity
 from .base import HealthChecker
-from ..models import HealthCheck, ReflectionLayer, CheckStatus, Severity, InsightType
 
 if TYPE_CHECKING:
     from ..analyzer import InteractionAnalyzer

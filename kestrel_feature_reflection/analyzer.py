@@ -10,15 +10,18 @@ Uses LLM to analyze past interactions and generate insights about:
 
 import json
 import logging
-from kestrel_sovereign.execution_custody import is_execution_control_error
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from kestrel_sovereign.conversation_speakers import (
     is_untrusted_conversation_speaker,
     project_conversation_message,
 )
-from kestrel_sovereign.security.input_guardrails import extract_raw_user_content, wrap_user_input
+from kestrel_sovereign.execution_custody import is_execution_control_error
+from kestrel_sovereign.security.input_guardrails import (
+    extract_raw_user_content,
+    wrap_user_input,
+)
 
 from .models import Insight, InsightType, ReflectionPrivacyChanged
 
@@ -259,15 +262,7 @@ class InteractionAnalyzer:
             return []
 
         try:
-            if hasattr(self.episodes, 'get_recent_episodes'):
-                episodes = await self.episodes.get_recent_episodes(
-                    limit=max_count,
-                    agent_id=self.agent_id,
-                )
-            elif hasattr(self.episodes, 'list_episodes'):
-                episodes = await self.episodes.list_episodes(limit=max_count)
-            else:
-                return []
+            episodes = await self.episodes.get_episodes(limit=max_count)
 
             # Convert to list of dicts if needed
             result = []
@@ -350,8 +345,8 @@ class InteractionAnalyzer:
         - Thinking/reasoning text before/after JSON
         - Multiple JSON objects in response
         """
-        import uuid
         import re
+        import uuid
 
         text = response_text.strip()
 
