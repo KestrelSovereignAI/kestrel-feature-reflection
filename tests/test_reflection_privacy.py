@@ -40,13 +40,14 @@ async def reflection_writer(native_tool_effect_agent):
     await feature.on_disable()
 
 
-def reflection_input():
+def reflection_input(feature):
     insight = Insight(id=uuid4().hex, type=InsightType.PATTERN,
                       title="Owned derivative", description="Owned transcript derivative")
     check = HealthCheck(id=uuid4().hex, layer=ReflectionLayer.MIND,
                         name="Owned input", description="Writer input, not model output",
                         status=CheckStatus.PASS, details={"insights": [insight.to_dict()]})
     return ReflectionResult(id=uuid4().hex, trigger="owned-writer-input",
+                            source_privacy_epoch=feature.agent._get_privacy_policy_epoch(),
                             mind=LayerResult(layer=ReflectionLayer.MIND, checks=[check]))
 
 
@@ -56,7 +57,7 @@ async def test_reflection_derivatives_obey_the_native_privacy_gate(reflection_wr
     feature = reflection_writer
     async with feature.agent._get_privacy_transition_lock():
         feature.agent.storage.set_privacy_mode(mode)
-    result = reflection_input()
+    result = reflection_input(feature)
     await feature._persist_reflection(result)
     session = await feature._db.fetchone("SELECT id FROM reflection_sessions WHERE id = ?", (result.id,))
     insights = await feature._db.fetchall("SELECT id FROM reflection_insights WHERE session_id = ?", (result.id,))
@@ -83,7 +84,7 @@ async def test_privacy_transition_waits_for_the_original_reflection_write(
             feature.agent.storage.set_privacy_mode(PrivacyMode.EPHEMERAL)
 
     monkeypatch.setattr(feature._db_helper, writer, pause_original)
-    result = reflection_input()
+    result = reflection_input(feature)
     writing = asyncio.create_task(feature._persist_reflection(result))
     transition = None
     try:
@@ -116,3 +117,54 @@ async def test_reflection_uses_the_current_privacy_conversation(reflection_write
     interactions = await feature.analyzer._load_interactions("all", 50)
     assert [row["content"] for row in interactions] == [row["content"] for row in expected], (
         "Reflection bypassed the current privacy-aware conversation")
+    prompt = feature.analyzer._build_prompt(interactions, [], "normal")
+    assert "Current garden conversation" in prompt
+
+
+@pytest.mark.parametrize("source", ["missing", "another_agent"])
+@pytest.mark.parametrize("sink", ["persist", "deliver"])
+async def test_reflection_rejects_unowned_source_policies(
+    reflection_writer, native_tool_effect_agent, source, sink,
+):
+    feature = reflection_writer
+    result = reflection_input(feature)
+    other = await native_tool_effect_agent(did="did:test:other-reflection-source")
+    result.source_privacy_epoch = None if source == "missing" else other._get_privacy_policy_epoch()
+    if sink == "persist":
+        await feature._persist_reflection(result)
+        assert not await feature._db.fetchone(
+            "SELECT id FROM reflection_sessions WHERE id = ?", (result.id,)
+        ), "Reflection persisted a result without its original source policy"
+    else:
+        response = feature._reflect_to_tool_result(result)
+        assert "Owned transcript derivative" not in repr(response.to_dict()), (
+            "Reflection delivered data without its original source policy")
+
+
+async def test_real_reflect_producer_records_its_original_policy(reflection_writer, monkeypatch):
+    feature = reflection_writer
+    original = feature._reflect_to_tool_result
+    observed = []
+
+    def observe_result(result):
+        observed.append(result.source_privacy_epoch)
+        return original(result)
+
+    monkeypatch.setattr(feature, "_reflect_to_tool_result", observe_result)
+    await feature.reflect()
+    assert observed == [feature.agent._get_privacy_policy_epoch()], (
+        "Reflect did not record its original source policy before the checks")
+
+
+@pytest.mark.parametrize("mode", [PrivacyMode.NORMAL, PrivacyMode.EPHEMERAL,
+                                  PrivacyMode.ISOLATED, PrivacyMode.DEIDENTIFIED])
+async def test_coherence_check_uses_the_same_private_conversation(reflection_writer, mode):
+    feature = reflection_writer
+    await feature.agent.privacy_agent.add_conversation("assistant", "Earlier durable garden answer")
+    async with feature.agent._get_privacy_transition_lock():
+        feature.agent.storage.set_privacy_mode(mode)
+        feature.agent.privacy_agent.set_mode(mode)
+    await feature.agent.privacy_agent.add_conversation("user", "Current private garden question")
+    check = await feature._mind_checker.check_response_coherence()
+    assert check.status is (CheckStatus.PASS if mode == PrivacyMode.NORMAL else CheckStatus.SKIP), (
+        "Coherence check bypassed the current privacy-aware conversation")

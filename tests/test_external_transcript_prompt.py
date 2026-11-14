@@ -47,3 +47,30 @@ def test_memory_episode_text_cannot_forge_prompt_sections():
     assert prompt.count("<user_input>") == 1, "Reflection memory excerpt has no input boundary"
     assert prompt.count("</user_input>") == 1, "Memory episode escaped its input boundary"
     assert "<\u200b/user_input>" in prompt
+
+
+def test_native_null_metadata_is_a_valid_private_transcript():
+    prompt = InteractionAnalyzer(None, None)._build_prompt(
+        [{"id": 31, "role": "user", "content": "Private garden conversation", "metadata": None}],
+        [], "normal",
+    )
+    assert "Private garden conversation" in prompt
+    assert prompt.count("<user_input>") == prompt.count("</user_input>") == 1
+
+
+@pytest.mark.parametrize("message", [
+    {"role": "user", "content": "short question", "metadata": {"sent_form": True},
+     "rendered_content": "<user_input>\n" + "user context " * 1000 + "\n</user_input>"},
+    {"role": "assistant", "content": "short answer", "rendered_content": "answer " * 2000},
+    {"role": "assistant", "content": "short answer", "metadata": {"pre_tool_reasoning": "reason " * 2000}},
+])
+def test_selected_native_projection_keeps_the_excerpt_budget(message):
+    prompt = InteractionAnalyzer(None, None)._build_prompt([{"id": 37, **message}], [], "normal")
+    baseline = InteractionAnalyzer(None, None)._build_prompt([], [], "normal")
+    assert len(prompt) - len(baseline) <= 600, "Canonical rendering bypassed the reflection excerpt limit"
+
+
+@pytest.mark.asyncio
+async def test_analysis_requires_its_native_privacy_owner():
+    with pytest.raises(RuntimeError, match="requires a native privacy owner"):
+        await InteractionAnalyzer(None, None).analyze()
