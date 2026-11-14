@@ -142,6 +142,7 @@ class ActionItem:
             "file_path": self.file_path,
             "fix_description": self.fix_description,
             "effort_estimate": self.effort_estimate,
+            "actionable": self.actionable,
         }
 
 

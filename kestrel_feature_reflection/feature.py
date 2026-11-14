@@ -517,9 +517,10 @@ class ReflectionFeature(Feature):
 
     def _source_policy_is_current(self, result: ReflectionResult) -> bool:
         """Use Core's installation epoch so returning to a mode cannot revive old work."""
-        return bool(result.source_privacy_epoch) and (
-            result.source_privacy_epoch == self.agent._get_privacy_policy_epoch()
-        )
+        return self._policy_epoch_is_current(result.source_privacy_epoch)
+
+    def _policy_epoch_is_current(self, epoch: str | None) -> bool:
+        return bool(epoch) and epoch == self.agent._get_privacy_policy_epoch()
 
     async def _persist_reflection(self, result: ReflectionResult) -> None:
         """Store reflection session and insights to the database."""
@@ -657,6 +658,10 @@ class ReflectionFeature(Feature):
         if not self._db_helper:
             return ToolResult.failed("Database not available")
 
+        if self.agent.privacy_agent.privacy_config.is_ephemeral():
+            return ToolResult.failed("Stored reflection insights are unavailable in EPHEMERAL mode")
+        source_epoch = self.agent._get_privacy_policy_epoch()
+
         # Validate type_filter against InsightType so a typo/wrong-case fails
         # loudly instead of returning 0 rows indistinguishable from "none".
         # Mirrors propose_improvement.change_type validation.
@@ -682,6 +687,10 @@ class ReflectionFeature(Feature):
                 raise
             logger.error(f"Failed to get insights: {e}")
             return ToolResult.failed(str(e))
+
+        if (not self._policy_epoch_is_current(source_epoch)
+                or self.agent.privacy_agent.privacy_config.is_ephemeral()):
+            return ToolResult.failed("Privacy policy changed while reading insights; results were discarded")
 
         legacy = ReflectionResultFormatter.format_insights_response(insights)
         count = legacy.get("count", len(insights) if isinstance(insights, list) else 0)

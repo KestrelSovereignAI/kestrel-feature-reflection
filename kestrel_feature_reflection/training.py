@@ -168,11 +168,11 @@ class TrainingManager:
             insight = Insight(
                 id=str(uuid.uuid4()),
                 type=InsightType.IMPROVEMENT,
-                title=action.get("message", "Training issue")[:100],
-                description=action.get("message", ""),
+                title=action["title"][:100],
+                description=action["description"],
                 confidence=0.8,
                 actionable=True,
-                suggested_action=action.get("suggested_fix", ""),
+                suggested_action=action["fix_description"],
             )
 
             try:
